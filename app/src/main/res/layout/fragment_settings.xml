@@ -16,9 +16,9 @@
         android:textStyle="bold"
         android:layout_marginBottom="16dp" />
 
-    <!-- 绑定老人 -->
+    <!-- 绑定状态 -->
     <com.google.android.material.card.MaterialCardView
-        android:id="@+id/card_bind"
+        android:id="@+id/card_binding_status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="16dp">
@@ -32,22 +32,28 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/bind_elder"
-                android:textSize="18sp" />
+                android:text="绑定状态"
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
-            <EditText
-                android:id="@+id/et_bind_code"
-                android:layout_width="match_parent"
+            <TextView
+                android:id="@+id/tv_binding_info"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:hint="@string/input_bind_code"
-                android:layout_marginTop="8dp" />
+                android:layout_marginTop="8dp"
+                android:text="未绑定"
+                android:textSize="16sp"
+                android:textColor="#666666" />
 
-            <Button
-                android:id="@+id/btn_bind"
-                android:layout_width="match_parent"
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_unbind"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/bind"
-                android:layout_marginTop="8dp" />
+                android:layout_marginTop="8dp"
+                android:text="解除绑定"
+                android:textColor="#F44336"
+                android:visibility="gone" />
 
         </LinearLayout>
 

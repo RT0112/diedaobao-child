@@ -2,6 +2,7 @@ package com.familyguardian.app.cloud
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.provider.Settings
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -14,6 +15,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * CloudBase HTTP API 客户端（子女端）
+ * v0.4.0: 新增 registerUser() 自动注册
  */
 object CloudBaseClient {
     
@@ -23,9 +25,14 @@ object CloudBaseClient {
     
     private const val PREFS_NAME = "cloudbase_prefs"
     private const val KEY_USER_ID = "user_id"
-    private const val KEY_ELDER_ID = "elder_id" // 绑定的老人ID
+    private const val KEY_ELDER_ID = "elder_id"
+    private const val KEY_USER_NAME = "user_name"
+    private const val KEY_USER_PHONE = "user_phone"
     
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private val gson = Gson()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     
@@ -41,6 +48,11 @@ object CloudBaseClient {
     }
     
     /**
+     * 检查是否已注册
+     */
+    fun isRegistered(): Boolean = userId != null
+    
+    /**
      * 检查是否已绑定老人
      */
     fun hasBoundElder(): Boolean = elderId != null
@@ -51,15 +63,76 @@ object CloudBaseClient {
     fun getElderId(): String? = elderId
     
     /**
-     * 绑定老人
+     * 获取用户名
      */
-    suspend fun bindElder(context: Context, bindCode: String): Boolean {
+    fun getUserName(): String = prefs.getString(KEY_USER_NAME, "") ?: ""
+    
+    /**
+     * v0.4.0: 自动注册（子女端）
+     * 使用 deviceId 自动注册，无需用户输入
+     */
+    suspend fun autoRegister(context: Context): Boolean {
+        // 已注册则跳过
+        if (userId != null) return true
+        
+        val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            ?: return false
+        
         return withContext(Dispatchers.IO) {
             try {
+                val body = JsonObject().apply {
+                    addProperty("deviceId", deviceId)
+                    addProperty("name", "家属")
+                    addProperty("phone", "")
+                    addProperty("role", "guardian")
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/user-register")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "autoRegister failed: ${response.code}")
+                    return@withContext false
+                }
+                
+                val responseBody = response.body?.string()
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val newUserId = json.get("userId")?.asString
+                
+                if (newUserId != null) {
+                    userId = newUserId
+                    prefs.edit().putString(KEY_USER_ID, newUserId).apply()
+                    Log.i(TAG, "Guardian registered: $newUserId")
+                    true
+                } else {
+                    Log.e(TAG, "autoRegister: no userId in response")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "autoRegister error", e)
+                false
+            }
+        }
+    }
+    
+    /**
+     * 绑定老人（输入绑定码）
+     */
+    suspend fun bindElder(bindCode: String): BindResult {
+        return withContext(Dispatchers.IO) {
+            try {
+                // 确保已注册
+                if (userId == null) {
+                    return@withContext BindResult(false, "请先完成注册")
+                }
+                
                 val url = "$BASE_URL/bind-family"
                 val body = JsonObject().apply {
                     addProperty("bindCode", bindCode)
-                    addProperty("guardianId", userId ?: return@withContext false)
+                    addProperty("guardianId", userId)
                 }
                 
                 val request = Request.Builder()
@@ -68,29 +141,45 @@ object CloudBaseClient {
                     .build()
                 
                 val response = client.newCall(request).execute()
+                val responseBody = response.body?.string()
+                Log.i(TAG, "bindElder response: $responseBody")
+                
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "bindElder failed: ${response.code}")
-                    return@withContext false
+                    return@withContext BindResult(false, "网络错误(${response.code})")
                 }
                 
-                val responseBody = response.body?.string()
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
-                val newElderId = json.get("elderId")?.asString
+                val code = json.get("code")?.asInt ?: 0
                 
-                if (newElderId != null) {
-                    elderId = newElderId
-                    prefs.edit().putString(KEY_ELDER_ID, newElderId).apply()
-                    Log.i(TAG, "Elder bound: $newElderId")
-                    true
+                if (code == 200) {
+                    val newElderId = json.get("elderId")?.asString
+                    if (newElderId != null) {
+                        elderId = newElderId
+                        prefs.edit().putString(KEY_ELDER_ID, newElderId).apply()
+                        Log.i(TAG, "Elder bound: $newElderId")
+                        BindResult(true, "绑定成功")
+                    } else {
+                        // 可能是 Already bound 的情况
+                        val msg = json.get("message")?.asString ?: "绑定成功"
+                        BindResult(true, msg)
+                    }
                 } else {
-                    Log.e(TAG, "bindElder: no elderId in response")
-                    false
+                    val msg = json.get("message")?.asString ?: "绑定失败"
+                    BindResult(false, msg)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "bindElder error", e)
-                false
+                BindResult(false, "网络异常：${e.message}")
             }
         }
+    }
+    
+    /**
+     * 解绑老人
+     */
+    fun unbindElder() {
+        elderId = null
+        prefs.edit().remove(KEY_ELDER_ID).apply()
     }
     
     /**
@@ -154,12 +243,14 @@ object CloudBaseClient {
     }
     
     // 数据类
+    data class BindResult(val success: Boolean, val message: String)
+    
     data class ElderStatus(
         val elderId: String,
         val name: String,
         val lastLocation: Location?,
         val lastUpdate: Long,
-        val status: String // "normal" | "fallen"
+        val status: String
     )
     
     data class Location(

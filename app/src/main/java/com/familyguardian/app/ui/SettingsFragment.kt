@@ -5,11 +5,10 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.databinding.FragmentSettingsBinding
-import kotlinx.coroutines.launch
 
 class SettingsFragment : Fragment() {
     
@@ -28,52 +27,52 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 绑定按钮
-        b.btnBind.setOnClickListener { onBind() }
+        // 解绑按钮
+        b.btnUnbind.setOnClickListener { showUnbindConfirm() }
         
         // 关于按钮
         b.btnAbout.setOnClickListener { showAbout() }
         
-        // 更新UI显示绑定状态
+        // 更新绑定状态显示
         updateBindingStatus()
     }
     
     private fun updateBindingStatus() {
         val hasBound = CloudBaseClient.hasBoundElder()
-        b.etBindCode.hint = if (hasBound) "已绑定（输入新码替换）" else "输入绑定码"
-        b.btnBind.text = if (hasBound) "更换绑定" else "绑定"
+        
+        if (hasBound) {
+            b.tvBindingInfo.text = "已绑定老人（ID: ${CloudBaseClient.getElderId()?.take(8)}...）"
+            b.tvBindingInfo.setTextColor(resources.getColor(android.R.color.holo_green_dark, null))
+            b.btnUnbind.visibility = View.VISIBLE
+        } else {
+            b.tvBindingInfo.text = "未绑定老人，请在首页绑定"
+            b.tvBindingInfo.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+            b.btnUnbind.visibility = View.GONE
+        }
     }
     
-    private fun onBind() {
-        val code = b.etBindCode.text.toString().trim()
-        if (code.isEmpty()) {
-            Toast.makeText(requireContext(), "请输入绑定码", Toast.LENGTH_SHORT).show()
-            return
-        }
-        
-        b.btnBind.isEnabled = false
-        b.btnBind.text = "绑定中..."
-        
-        lifecycleScope.launch {
-            val success = CloudBaseClient.bindElder(requireContext(), code)
-            
-            if (success) {
-                Toast.makeText(requireContext(), "绑定成功", Toast.LENGTH_SHORT).show()
-                b.etBindCode.text.clear()
-            } else {
-                Toast.makeText(requireContext(), "绑定失败：无效的绑定码", Toast.LENGTH_SHORT).show()
+    private fun showUnbindConfirm() {
+        AlertDialog.Builder(requireContext())
+            .setTitle("确认解绑")
+            .setMessage("解绑后将无法接收老人的跌倒报警，确定要解绑吗？")
+            .setPositiveButton("解绑") { _, _ ->
+                CloudBaseClient.unbindElder()
+                Toast.makeText(requireContext(), "已解绑", Toast.LENGTH_SHORT).show()
+                updateBindingStatus()
             }
-            
-            b.btnBind.isEnabled = true
-            updateBindingStatus()
-        }
+            .setNegativeButton("取消", null)
+            .show()
     }
     
     private fun showAbout() {
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        val version = try {
+            requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
+        } catch (e: Exception) { "未知" }
+        
+        AlertDialog.Builder(requireContext())
             .setTitle("关于亲情守护")
             .setMessage("""
-                亲情守护 v0.1.0
+                亲情守护 v$version
                 
                 守护老人安全，及时接收跌倒报警通知。
                 
@@ -82,6 +81,11 @@ class SettingsFragment : Fragment() {
             """.trimIndent())
             .setPositiveButton("确定", null)
             .show()
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        updateBindingStatus()
     }
     
     override fun onDestroyView() {

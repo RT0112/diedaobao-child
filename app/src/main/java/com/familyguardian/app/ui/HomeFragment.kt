@@ -63,35 +63,116 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
-        // 初始化UI
-        b.tvElderName.text = elderName
-        b.tvStatus.text = "状态正常"
-        b.tvLastUpdate.text = "最后更新：刚刚"
-        
         // 绑定按钮
+        b.btnBind.setOnClickListener { onBindClick() }
+        
+        // 操作按钮
         b.btnViewLocation.setOnClickListener { onViewLocation() }
         b.btnCallElder.setOnClickListener { onCallElder() }
         
-        // 加载老人状态
-        loadElderStatus()
+        // 首次启动自动注册
+        ensureRegistered()
+        
+        // 更新UI状态
+        updateUI()
+    }
+    
+    /**
+     * 确保已注册（首次启动自动注册）
+     */
+    private fun ensureRegistered() {
+        if (!CloudBaseClient.isRegistered()) {
+            lifecycleScope.launch {
+                val success = CloudBaseClient.autoRegister(requireContext())
+                if (!success) {
+                    Toast.makeText(requireContext(), "网络注册失败，部分功能不可用", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    
+    /**
+     * 更新UI状态（绑定/未绑定）
+     */
+    private fun updateUI() {
+        val hasBound = CloudBaseClient.hasBoundElder()
+        
+        if (hasBound) {
+            b.cardBindElder.visibility = View.GONE
+            b.cardElderStatus.visibility = View.VISIBLE
+            b.layoutActions.visibility = View.VISIBLE
+            loadElderStatus()
+        } else {
+            b.cardBindElder.visibility = View.VISIBLE
+            b.cardElderStatus.visibility = View.GONE
+            b.layoutActions.visibility = View.GONE
+        }
+    }
+    
+    /**
+     * 绑定按钮点击
+     */
+    private fun onBindClick() {
+        val code = b.etBindCode.text.toString().trim()
+        if (code.isEmpty()) {
+            Toast.makeText(requireContext(), "请输入绑定码", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (code.length != 6) {
+            showBindError("绑定码为6位数字")
+            return
+        }
+        
+        // 先确保已注册
+        if (!CloudBaseClient.isRegistered()) {
+            lifecycleScope.launch {
+                val registered = CloudBaseClient.autoRegister(requireContext())
+                if (!registered) {
+                    showBindError("注册失败，请检查网络")
+                    return@launch
+                }
+                doBind(code)
+            }
+        } else {
+            doBind(code)
+        }
+    }
+    
+    private fun doBind(code: String) {
+        b.btnBind.isEnabled = false
+        b.btnBind.text = "绑定中..."
+        b.tvBindError.visibility = View.GONE
+        
+        lifecycleScope.launch {
+            val result = CloudBaseClient.bindElder(code)
+            
+            b.btnBind.isEnabled = true
+            b.btnBind.text = "绑定"
+            
+            if (result.success) {
+                Toast.makeText(requireContext(), "绑定成功！", Toast.LENGTH_SHORT).show()
+                b.etBindCode.text?.clear()
+                updateUI()
+            } else {
+                showBindError(result.message)
+            }
+        }
+    }
+    
+    private fun showBindError(message: String) {
+        b.tvBindError.text = message
+        b.tvBindError.visibility = View.VISIBLE
     }
     
     private fun loadElderStatus() {
-        if (!CloudBaseClient.hasBoundElder()) {
-            b.tvElderName.text = "未绑定老人"
-            b.tvStatus.text = "请点击「设置」绑定老人设备"
-            b.tvLastUpdate.visibility = View.GONE
-            b.btnViewLocation.isEnabled = false
-            b.btnCallElder.isEnabled = false
-            return
-        }
+        if (!CloudBaseClient.hasBoundElder()) return
         
         lifecycleScope.launch {
             val status = CloudBaseClient.getElderStatus()
             if (status != null) {
                 b.tvElderName.text = status.name.ifEmpty { elderName }
                 
-                val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常"
+                val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
                 b.tvStatus.text = statusText
                 b.tvStatus.setTextColor(
                     ContextCompat.getColor(
@@ -104,7 +185,9 @@ class HomeFragment : Fragment() {
                 val timeStr = formatTime(status.lastUpdate)
                 b.tvLastUpdate.text = "最后更新：$timeStr"
             } else {
+                b.tvElderName.text = elderName
                 b.tvStatus.text = "获取状态失败"
+                b.tvStatus.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
             }
         }
     }
@@ -138,9 +221,7 @@ class HomeFragment : Fragment() {
                 if (intent.resolveActivity(requireContext().packageManager) != null) {
                     startActivity(intent)
                 } else {
-                    // 没有地图应用，复制坐标
                     val coord = "${location.latitude}, ${location.longitude}"
-                    android.content.ClipboardManager::class.java
                     val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     cm.setPrimaryClip(android.content.ClipData.newPlainText("坐标", coord))
                     Toast.makeText(requireContext(), "位置：$coord（已复制）", Toast.LENGTH_LONG).show()
@@ -183,9 +264,7 @@ class HomeFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         // 每次回到页面刷新状态
-        if (CloudBaseClient.hasBoundElder()) {
-            loadElderStatus()
-        }
+        updateUI()
     }
     
     override fun onDestroyView() {
