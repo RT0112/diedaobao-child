@@ -25,20 +25,8 @@ class HomeFragment : Fragment() {
     private var _binding: FragmentHomeBinding? = null
     private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
-    private val elderPhone = "13800138000" // TODO: 从绑定数据获取
-    private val elderName = "爸爸"        // TODO: 从绑定数据获取
-    
-    // 位置权限
-    private val locationPermission = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val granted = result.entries.all { it.value }
-        if (granted) {
-            openMap()
-        } else {
-            Toast.makeText(requireContext(), "需要位置权限才能查看位置", Toast.LENGTH_SHORT).show()
-        }
-    }
+    private val elderName by lazy { CloudBaseClient.getElderName() }
+    private val elderPhone by lazy { CloudBaseClient.getElderPhone() }
     
     // 拨打电话权限
     private val callPermission = registerForActivityResult(
@@ -47,7 +35,8 @@ class HomeFragment : Fragment() {
         if (granted) {
             makeCall()
         } else {
-            Toast.makeText(requireContext(), "需要电话权限才能拨打电话", Toast.LENGTH_SHORT).show()
+            // 没有权限就用拨号盘（不需要权限）
+            dialPhone()
         }
     }
     
@@ -172,6 +161,9 @@ class HomeFragment : Fragment() {
             if (status != null) {
                 b.tvElderName.text = status.name.ifEmpty { elderName }
                 
+                // 保存老人信息供拨打电话使用
+                CloudBaseClient.saveElderInfo(status.name, null)
+                
                 val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
                 b.tvStatus.text = statusText
                 b.tvStatus.setTextColor(
@@ -184,6 +176,13 @@ class HomeFragment : Fragment() {
                 
                 val timeStr = formatTime(status.lastUpdate)
                 b.tvLastUpdate.text = "最后更新：$timeStr"
+                
+                // 位置状态提示
+                if (status.lastLocation != null) {
+                    b.btnViewLocation.text = "📍 查看位置"
+                } else {
+                    b.btnViewLocation.text = "📍 暂无位置"
+                }
             } else {
                 b.tvElderName.text = elderName
                 b.tvStatus.text = "获取状态失败"
@@ -198,36 +197,26 @@ class HomeFragment : Fragment() {
             return
         }
         
-        // 检查位置权限
-        val permissions = arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-        if (permissions.all { ContextCompat.checkSelfPermission(requireContext(), it) == PackageManager.PERMISSION_GRANTED }) {
-            openMap()
-        } else {
-            locationPermission.launch(permissions)
-        }
-    }
-    
-    private fun openMap() {
         lifecycleScope.launch {
             val status = CloudBaseClient.getElderStatus()
             val location = status?.lastLocation
             
-            if (location != null) {
-                val uri = Uri.parse("geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}")
+            if (location != null && location.latitude != 0.0 && location.longitude != 0.0) {
+                // 有位置数据 → 打开地图
+                val uri = Uri.parse("geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}(老人位置)")
                 val intent = Intent(Intent.ACTION_VIEW, uri)
                 if (intent.resolveActivity(requireContext().packageManager) != null) {
                     startActivity(intent)
                 } else {
+                    // 没有地图应用，复制坐标
                     val coord = "${location.latitude}, ${location.longitude}"
                     val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                     cm.setPrimaryClip(android.content.ClipData.newPlainText("坐标", coord))
                     Toast.makeText(requireContext(), "位置：$coord（已复制）", Toast.LENGTH_LONG).show()
                 }
             } else {
-                Toast.makeText(requireContext(), "暂无位置数据", Toast.LENGTH_SHORT).show()
+                // 无位置数据 → 提示原因
+                Toast.makeText(requireContext(), "暂无位置数据\n请确保老人端已开启守护并授权定位", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -238,15 +227,24 @@ class HomeFragment : Fragment() {
             return
         }
         
+        // 有 CALL_PHONE 权限 → 直接拨号；没有 → 用拨号盘
         if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
             makeCall()
         } else {
+            // 请求权限，被拒绝后 fallback 到拨号盘
             callPermission.launch(Manifest.permission.CALL_PHONE)
         }
     }
     
+    /** 直接拨打电话（需要 CALL_PHONE 权限） */
     private fun makeCall() {
         val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$elderPhone"))
+        startActivity(intent)
+    }
+    
+    /** 打开拨号盘（不需要权限） */
+    private fun dialPhone() {
+        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$elderPhone"))
         startActivity(intent)
     }
     

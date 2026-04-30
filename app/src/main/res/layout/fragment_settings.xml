@@ -1,70 +1,115 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="16dp"
     tools:context=".ui.SettingsFragment">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/title_settings"
-        android:textSize="20sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="16dp" />
-
-    <!-- 绑定状态 -->
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/card_binding_status"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="16dp">
+        android:orientation="vertical"
+        android:padding="16dp">
 
-        <LinearLayout
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/title_settings"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 权限设置 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_permissions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_marginBottom="16dp">
 
-            <TextView
-                android:layout_width="wrap_content"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="绑定状态"
-                android:textSize="18sp"
-                android:textStyle="bold" />
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <TextView
-                android:id="@+id/tv_binding_info"
-                android:layout_width="wrap_content"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🔐 权限设置"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="位置、电话、通知等权限管理"
+                    android:textSize="14sp"
+                    android:textColor="#666666" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_permission_settings"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="权限管理" />
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 绑定状态 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_binding_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="未绑定"
-                android:textSize="16sp"
-                android:textColor="#666666" />
+                android:orientation="vertical"
+                android:padding="16dp">
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_unbind"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="解除绑定"
-                android:textColor="#F44336"
-                android:visibility="gone" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="绑定状态"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
 
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/tv_binding_info"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="未绑定"
+                    android:textSize="16sp"
+                    android:textColor="#666666" />
 
-    </com.google.android.material.card.MaterialCardView>
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_unbind"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="解除绑定"
+                    android:textColor="#F44336"
+                    android:visibility="gone" />
 
-    <!-- 关于 -->
-    <Button
-        android:id="@+id/btn_about"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/about"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+            </LinearLayout>
 
-</LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 关于 -->
+        <Button
+            android:id="@+id/btn_about"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/about"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+    </LinearLayout>
+</ScrollView>

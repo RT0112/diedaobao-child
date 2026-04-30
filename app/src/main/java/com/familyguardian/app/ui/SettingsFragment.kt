@@ -1,5 +1,6 @@
 package com.familyguardian.app.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -28,6 +29,9 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         
+        // 权限设置
+        b.btnPermissionSettings.setOnClickListener { openPermissionSettings() }
+        
         // 解绑按钮
         b.btnUnbind.setOnClickListener { showUnbindConfirm() }
         
@@ -36,6 +40,10 @@ class SettingsFragment : Fragment() {
         
         // 更新绑定状态显示
         updateBindingStatus()
+    }
+    
+    private fun openPermissionSettings() {
+        startActivity(Intent(requireContext(), PermissionActivity::class.java))
     }
     
     private fun updateBindingStatus() {

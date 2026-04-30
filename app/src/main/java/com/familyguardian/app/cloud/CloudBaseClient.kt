@@ -28,6 +28,8 @@ object CloudBaseClient {
     private const val KEY_ELDER_ID = "elder_id"
     private const val KEY_USER_NAME = "user_name"
     private const val KEY_USER_PHONE = "user_phone"
+    private const val KEY_ELDER_NAME = "elder_name"
+    private const val KEY_ELDER_PHONE = "elder_phone"
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -66,6 +68,27 @@ object CloudBaseClient {
      * 获取用户名
      */
     fun getUserName(): String = prefs.getString(KEY_USER_NAME, "") ?: ""
+    
+    /**
+     * 获取老人姓名
+     */
+    fun getElderName(): String = prefs.getString(KEY_ELDER_NAME, "老人") ?: "老人"
+    
+    /**
+     * 获取老人电话
+     */
+    fun getElderPhone(): String = prefs.getString(KEY_ELDER_PHONE, "") ?: ""
+    
+    /**
+     * 保存老人信息（从 get-status 返回）
+     */
+    fun saveElderInfo(name: String?, phone: String?) {
+        prefs.edit().apply {
+            if (name != null) putString(KEY_ELDER_NAME, name)
+            if (phone != null) putString(KEY_ELDER_PHONE, phone)
+            apply()
+        }
+    }
     
     /**
      * v0.4.0: 自动注册（子女端）
