@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/nav_home">
+
+    <fragment
+        android:id="@+id/nav_home"
+        android:name="com.familyguardian.app.ui.HomeFragment"
+        android:label="@string/title_home" />
+
+    <fragment
+        android:id="@+id/nav_history"
+        android:name="com.familyguardian.app.ui.HistoryFragment"
+        android:label="@string/title_history" />
+
+    <fragment
+        android:id="@+id/nav_settings"
+        android:name="com.familyguardian.app.ui.SettingsFragment"
+        android:label="@string/title_settings" />
+
+</navigation>

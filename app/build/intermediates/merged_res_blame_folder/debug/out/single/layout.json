@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "com.familyguardian.app-mergeDebugResources-49:/layout/fragment_home.xml",
+        "source": "com.familyguardian.app-main-52:/layout/fragment_home.xml"
+    },
+    {
+        "merged": "com.familyguardian.app-mergeDebugResources-49:/layout/item_fall_event.xml",
+        "source": "com.familyguardian.app-main-52:/layout/item_fall_event.xml"
+    },
+    {
+        "merged": "com.familyguardian.app-mergeDebugResources-49:/layout/activity_main.xml",
+        "source": "com.familyguardian.app-main-52:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.familyguardian.app-mergeDebugResources-49:/layout/fragment_settings.xml",
+        "source": "com.familyguardian.app-main-52:/layout/fragment_settings.xml"
+    },
+    {
+        "merged": "com.familyguardian.app-mergeDebugResources-49:/layout/fragment_history.xml",
+        "source": "com.familyguardian.app-main-52:/layout/fragment_history.xml"
+    }
+]

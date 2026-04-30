@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">亲情守护</string>
+    <string name="title_home">首页</string>
+    <string name="title_history">历史</string>
+    <string name="title_settings">设置</string>
+    
+    <!-- Home -->
+    <string name="elder_status">老人状态</string>
+    <string name="status_normal">状态正常</string>
+    <string name="status_warning">有跌倒风险</string>
+    <string name="last_update">最后更新：%s</string>
+    <string name="view_location">查看位置</string>
+    <string name="call_elder">拨打电话</string>
+    
+    <!-- History -->
+    <string name="fall_history">跌倒历史</string>
+    <string name="no_history">暂无跌倒记录</string>
+    <string name="fall_at">跌倒时间：%s</string>
+    <string name="fall_location">跌倒位置：%s</string>
+    
+    <!-- Settings -->
+    <string name="bind_elder">绑定老人</string>
+    <string name="unbind_elder">解绑老人</string>
+    <string name="notification_settings">通知设置</string>
+    <string name="about">关于</string>
+    
+    <!-- Bind -->
+    <string name="input_bind_code">输入绑定码</string>
+    <string name="bind">绑定</string>
+    <string name="bind_success">绑定成功</string>
+    <string name="bind_failed">绑定失败</string>
+</resources>
