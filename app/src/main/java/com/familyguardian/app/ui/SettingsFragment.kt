@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.databinding.FragmentSettingsBinding
@@ -39,14 +40,15 @@ class SettingsFragment : Fragment() {
     
     private fun updateBindingStatus() {
         val hasBound = CloudBaseClient.hasBoundElder()
+        val context = context ?: return
         
         if (hasBound) {
             b.tvBindingInfo.text = "已绑定老人（ID: ${CloudBaseClient.getElderId()?.take(8)}...）"
-            b.tvBindingInfo.setTextColor(resources.getColor(android.R.color.holo_green_dark, null))
+            b.tvBindingInfo.setTextColor(ContextCompat.getColor(context, android.R.color.holo_green_dark))
             b.btnUnbind.visibility = View.VISIBLE
         } else {
             b.tvBindingInfo.text = "未绑定老人，请在首页绑定"
-            b.tvBindingInfo.setTextColor(resources.getColor(android.R.color.darker_gray, null))
+            b.tvBindingInfo.setTextColor(ContextCompat.getColor(context, android.R.color.darker_gray))
             b.btnUnbind.visibility = View.GONE
         }
     }
