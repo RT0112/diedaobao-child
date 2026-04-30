@@ -56,7 +56,7 @@
                     android:hint="输入6位绑定码"
                     app:counterEnabled="true"
                     app:counterMaxLength="6"
-                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/et_bind_code"
@@ -155,7 +155,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_call_elder"
-                style="@style/Widget.Material3.Button.OutlinedButton"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="0dp"
                 android:layout_height="56dp"
                 android:layout_weight="1"
