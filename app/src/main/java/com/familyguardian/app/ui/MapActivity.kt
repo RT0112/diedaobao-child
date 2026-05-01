@@ -5,37 +5,49 @@ import android.webkit.GeolocationPermissions
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import kotlinx.coroutines.launch
 
 /**
- * 地图Activity - 显示老人位置和电子围栏
- * 使用高德地图JS API（免费Web端）
+ * 地图Activity v2.0 — 三种模式
+ * - view: 只读查看老人位置+所有围栏
+ * - add: 添加围栏（拖拽画圆+保存）
+ * - view_fence: 查看单个围栏详情
+ * 
+ * 使用 Leaflet + 高德瓦片地图（免费无需API Key）
  */
 class MapActivity : AppCompatActivity() {
     
     private lateinit var webView: WebView
+    private var currentMode = "view"
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        currentMode = intent.getStringExtra("mode") ?: "view"
         
         webView = WebView(this)
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             allowFileAccess = true
-            // 允许WebView获取位置
             setGeolocationEnabled(true)
         }
         
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // 页面加载完后，加载老人位置和围栏数据
-                loadElderData()
+                when (currentMode) {
+                    "add" -> setupAddMode()
+                    "view_fence" -> setupViewFenceMode()
+                    else -> loadElderData()
+                }
             }
         }
         
@@ -44,28 +56,30 @@ class MapActivity : AppCompatActivity() {
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
             ) {
-                // 允许WebView使用位置
                 callback?.invoke(origin, true, false)
             }
         }
         
         setContentView(webView)
-        supportActionBar?.title = "📍 老人位置"
+        
+        when (currentMode) {
+            "add" -> supportActionBar?.title = "➕ 添加围栏"
+            "view_fence" -> supportActionBar?.title = "📍 ${intent.getStringExtra("fenceName") ?: "围栏"}"
+            else -> supportActionBar?.title = "📍 老人位置"
+        }
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         
-        // 加载本地HTML地图页面
         loadMapHtml()
     }
     
     private fun loadMapHtml() {
-        // 使用高德地图Web API（免费，无需key的基础功能）
         val html = """
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>老人位置</title>
+<title>地图</title>
 <style>
   * { margin: 0; padding: 0; }
   html, body, #container { width: 100%; height: 100%; font-size: 16px; }
@@ -73,34 +87,85 @@ class MapActivity : AppCompatActivity() {
   /* 信息面板 */
   #info-panel {
     position: absolute;
-    bottom: 20px;
-    left: 10px;
-    right: 10px;
+    bottom: 0;
+    left: 0;
+    right: 0;
     background: white;
-    border-radius: 12px;
-    padding: 14px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    border-radius: 16px 16px 0 0;
+    padding: 16px 20px;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
     z-index: 999;
   }
-  #info-panel h3 { font-size: 18px; color: #333; margin-bottom: 6px; }
+  #info-panel h3 { font-size: 18px; color: #333; margin-bottom: 8px; }
   #info-panel p { font-size: 14px; color: #666; margin: 3px 0; }
-  #info-panel .fence-info { 
-    margin-top: 8px; padding-top: 8px; 
-    border-top: 1px solid #eee; 
-    font-size: 13px; 
+  
+  /* 添加模式面板 */
+  #add-panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    border-radius: 16px 16px 0 0;
+    padding: 16px 20px;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    z-index: 999;
+    display: none;
   }
+  #add-panel label { font-size: 14px; color: #555; display: block; margin-top: 10px; }
+  #add-panel input {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 16px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-top: 4px;
+    box-sizing: border-box;
+  }
+  #add-panel .hint { font-size: 12px; color: #999; margin-top: 2px; }
+  #add-panel .save-btn {
+    width: 100%;
+    padding: 14px;
+    font-size: 18px;
+    color: white;
+    background: #1976D2;
+    border: none;
+    border-radius: 10px;
+    margin-top: 14px;
+    cursor: pointer;
+  }
+  #add-panel .save-btn:active { background: #1565C0; }
+  
+  .fence-info { margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; font-size: 13px; }
   .fence-item { margin: 4px 0; display: flex; align-items: center; }
   .fence-dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
   .fence-safe { background: #4CAF50; }
   .fence-alert { background: #F44336; }
   
-  /* 围栏列表 */
-  #fence-list { display: none; }
-  
-  /* 加载中 */
   #loading {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     font-size: 16px; color: #999; z-index: 1000;
+  }
+  
+  /* 圆心标记样式 */
+  .center-marker {
+    width: 24px; height: 24px;
+    background: #1976D2;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    cursor: grab;
+  }
+  .center-marker:active { cursor: grabbing; }
+  
+  /* 边缘调整标记 */
+  .edge-marker {
+    width: 16px; height: 16px;
+    background: #FF9800;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    cursor: ew-resize;
   }
 </style>
 </head>
@@ -108,6 +173,7 @@ class MapActivity : AppCompatActivity() {
 <div id="container"></div>
 <div id="loading">加载地图中...</div>
 
+<!-- 查看模式信息面板 -->
 <div id="info-panel" style="display:none;">
   <h3 id="elder-title">老人位置</h3>
   <p id="location-time">定位时间：加载中...</p>
@@ -115,12 +181,20 @@ class MapActivity : AppCompatActivity() {
   <div class="fence-info" id="fence-info"></div>
 </div>
 
-<script type="text/javascript">
-  // 高德地图 JS API 2.0（免费Web端，2.0需要key）
-  // 使用 OpenStreetMap + Leaflet 作为免费替代方案
-</script>
+<!-- 添加模式面板 -->
+<div id="add-panel">
+  <h3>📍 添加电子围栏</h3>
+  <p style="color:#666;font-size:13px;margin-top:4px;">拖拽蓝色圆心移动位置，拖拽橙色圆点调整大小</p>
+  <label>围栏名称</label>
+  <input type="text" id="fence-name" placeholder="如：家、公园、社区" maxlength="20" />
+  <div class="hint">留空则自动命名</div>
+  <label>半径（米）</label>
+  <input type="number" id="fence-radius" value="200" min="50" max="2000" />
+  <div class="hint">范围：50 - 2000 米</div>
+  <button class="save-btn" onclick="saveFence()">💾 保存围栏</button>
+</div>
 
-<!-- Leaflet.js + OpenStreetMap（完全免费，无需API Key） -->
+<!-- Leaflet.js -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -130,12 +204,19 @@ var elderMarker = null;
 var fenceCircles = [];
 var fenceData = [];
 
+// === 添加模式变量 ===
+var editCircle = null;
+var centerMarker = null;
+var edgeMarker = null;
+var currentCenter = null;
+var currentRadius = 200;
+
 function initMap(lat, lng) {
   if (map) return;
   
   map = L.map('container').setView([lat, lng], 15);
   
-  // 使用高德瓦片（国内更快）
+  // 高德瓦片（国内更快）
   L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
     subdomains: ['1', '2', '3', '4'],
     maxZoom: 18,
@@ -145,14 +226,12 @@ function initMap(lat, lng) {
   document.getElementById('loading').style.display = 'none';
 }
 
-// 设置老人位置标记
+// === 查看模式：设置老人位置 ===
 function setElderLocation(lat, lng, name, time) {
   if (!map) initMap(lat, lng);
   
-  // 移除旧标记
   if (elderMarker) map.removeLayer(elderMarker);
   
-  // 添加老人位置标记（红色大圆点）
   var icon = L.divIcon({
     className: 'elder-marker',
     html: '<div style="width:20px;height:20px;background:#F44336;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
@@ -165,14 +244,13 @@ function setElderLocation(lat, lng, name, time) {
   
   map.setView([lat, lng], 16);
   
-  // 更新信息面板
   document.getElementById('info-panel').style.display = 'block';
   document.getElementById('elder-title').textContent = (name || '老人') + ' 的位置';
   document.getElementById('location-time').textContent = '定位时间：' + (time || '未知');
   document.getElementById('location-coord').textContent = '坐标：' + lat.toFixed(6) + ', ' + lng.toFixed(6);
 }
 
-// 添加围栏圆形区域
+// === 查看模式：添加围栏圆形 ===
 function addFence(fenceId, name, lat, lng, radius, isActive) {
   if (!map) initMap(lat, lng);
   
@@ -193,7 +271,6 @@ function addFence(fenceId, name, lat, lng, radius, isActive) {
   updateFenceInfo();
 }
 
-// 更新围栏信息面板
 function updateFenceInfo() {
   var html = '';
   if (fenceData.length > 0) {
@@ -211,18 +288,194 @@ function updateFenceInfo() {
   document.getElementById('fence-info').innerHTML = html;
 }
 
-// 清除所有围栏
 function clearFences() {
   fenceCircles.forEach(function(c) { map.removeLayer(c); });
   fenceCircles = [];
   fenceData = [];
 }
 
-// Android调用入口
+// === 添加模式：初始化可编辑围栏 ===
+function setupEditableFence(lat, lng, radius) {
+  if (!map) initMap(lat, lng);
+  
+  currentCenter = L.latLng(lat, lng);
+  currentRadius = radius || 200;
+  
+  // 清理旧的
+  if (editCircle) map.removeLayer(editCircle);
+  if (centerMarker) map.removeLayer(centerMarker);
+  if (edgeMarker) map.removeLayer(edgeMarker);
+  
+  // 画可编辑圆形
+  editCircle = L.circle(currentCenter, {
+    radius: currentRadius,
+    color: '#1976D2',
+    fillColor: '#1976D2',
+    fillOpacity: 0.08,
+    weight: 2
+  }).addTo(map);
+  
+  // 圆心标记（可拖拽）
+  var centerIcon = L.divIcon({
+    className: 'center-marker-wrap',
+    html: '<div class="center-marker"></div>',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12]
+  });
+  
+  centerMarker = L.marker(currentCenter, {
+    icon: centerIcon,
+    draggable: true,
+    zIndexOffset: 1000
+  }).addTo(map);
+  
+  // 圆心拖拽 → 重画圆
+  centerMarker.on('drag', function(e) {
+    currentCenter = e.target.getLatLng();
+    editCircle.setLatLng(currentCenter);
+    updateEdgeMarker();
+  });
+  
+  centerMarker.on('dragend', function(e) {
+    currentCenter = e.target.getLatLng();
+    editCircle.setLatLng(currentCenter);
+    updateEdgeMarker();
+  });
+  
+  // 边缘调整标记（可拖拽调整半径）
+  var edgePos = getEdgePosition();
+  var edgeIcon = L.divIcon({
+    className: 'edge-marker-wrap',
+    html: '<div class="edge-marker"></div>',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+  
+  edgeMarker = L.marker(edgePos, {
+    icon: edgeIcon,
+    draggable: true,
+    zIndexOffset: 999
+  }).addTo(map);
+  
+  // 边缘拖拽 → 调整半径
+  edgeMarker.on('drag', function(e) {
+    var dist = currentCenter.distanceTo(e.target.getLatLng());
+    currentRadius = Math.round(Math.max(50, Math.min(2000, dist)));
+    editCircle.setRadius(currentRadius);
+    document.getElementById('fence-radius').value = currentRadius;
+  });
+  
+  edgeMarker.on('dragend', function(e) {
+    // 修正边缘标记位置到圆形边缘
+    updateEdgeMarker();
+  });
+  
+  // 地图居中到圆心
+  map.setView(currentCenter, 15);
+  
+  // 显示添加面板
+  document.getElementById('add-panel').style.display = 'block';
+  document.getElementById('fence-radius').value = currentRadius;
+  
+  // 监听半径输入框
+  document.getElementById('fence-radius').addEventListener('input', function(e) {
+    var val = parseInt(e.target.value) || 200;
+    val = Math.max(50, Math.min(2000, val));
+    currentRadius = val;
+    editCircle.setRadius(currentRadius);
+    updateEdgeMarker();
+  });
+}
+
+function getEdgePosition() {
+  if (!currentCenter) return [0, 0];
+  // 边缘标记放在圆心正东方向 radius 米处
+  var point = map.latLngToContainerPoint(currentCenter);
+  var edgePoint = L.point(point.x + currentRadius * getMetersPerPixel(), point.y);
+  return map.containerPointToLatLng(edgePoint);
+}
+
+function getMetersPerPixel() {
+  // 近似计算：每像素多少米
+  var center = map.getCenter();
+  var zoom = map.getZoom();
+  // 高德瓦片的分辨率公式
+  return 156543.03392 * Math.cos(center.lat * Math.PI / 180) / Math.pow(2, zoom);
+}
+
+function updateEdgeMarker() {
+  if (!edgeMarker || !currentCenter) return;
+  var edgePos = getEdgePosition();
+  edgeMarker.setLatLng(edgePos);
+}
+
+// === 保存围栏（由 Android 调用） ===
+function saveFence() {
+  if (!currentCenter) return;
+  
+  var name = document.getElementById('fence-name').value.trim();
+  var radius = parseInt(document.getElementById('fence-radius').value) || 200;
+  radius = Math.max(50, Math.min(2000, radius));
+  
+  // 回调 Android
+  if (window.Android) {
+    window.Android.onSaveFence(
+      name || '',
+      currentCenter.lat,
+      currentCenter.lng,
+      radius
+    );
+  }
+}
+
+// === 查看单个围栏 ===
+function showSingleFence(name, lat, lng, radius, isActive) {
+  if (!map) initMap(lat, lng);
+  
+  var color = isActive ? '#F44336' : '#4CAF50';
+  var circle = L.circle([lat, lng], {
+    radius: radius,
+    color: color,
+    fillColor: color,
+    fillOpacity: 0.12,
+    weight: 2,
+    dashArray: isActive ? '5, 5' : null
+  }).addTo(map);
+  
+  circle.bindPopup('<b>' + name + '</b><br>半径: ' + radius + '米');
+  
+  // 围栏中心标记
+  var icon = L.divIcon({
+    className: 'fence-center',
+    html: '<div style="width:14px;height:14px;background:' + color + ';border:2px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7]
+  });
+  L.marker([lat, lng], {icon: icon}).addTo(map);
+  
+  map.setView([lat, lng], 15);
+  
+  // 信息面板
+  document.getElementById('info-panel').style.display = 'block';
+  document.getElementById('elder-title').textContent = name;
+  document.getElementById('location-coord').textContent = '坐标：' + lat.toFixed(6) + ', ' + lng.toFixed(6) + ' | 半径：' + radius + '米';
+  document.getElementById('location-time').textContent = isActive ? '⚠️ 老人已越界' : '✅ 老人在围栏内';
+  
+  // 尝试加载老人位置
+  loadElderMarker();
+}
+
+function loadElderMarker() {
+  // 由 Android 在查看模式下调用
+}
+
+// Android 调用接口
 window.AndroidBridge = {
   setElderLocation: setElderLocation,
   addFence: addFence,
-  clearFences: clearFences
+  clearFences: clearFences,
+  setupEditableFence: setupEditableFence,
+  showSingleFence: showSingleFence
 };
 </script>
 </body>
@@ -232,6 +485,7 @@ window.AndroidBridge = {
         webView.loadDataWithBaseURL("https://localhost", html, "text/html", "UTF-8", null)
     }
     
+    // === 查看模式：加载老人数据 ===
     private fun loadElderData() {
         if (!CloudBaseClient.hasBoundElder()) {
             Toast.makeText(this, "请先绑定老人设备", Toast.LENGTH_SHORT).show()
@@ -239,38 +493,151 @@ window.AndroidBridge = {
         }
         
         lifecycleScope.launch {
-            // 加载老人位置
-            val status = CloudBaseClient.getElderStatus()
-            if (status != null && status.lastLocation != null) {
-                val loc = status.lastLocation
-                val name = status.name.ifEmpty { "老人" }
-                val time = formatTime(loc.timestamp)
-                
-                webView.evaluateJavascript(
-                    "if(window.AndroidBridge) AndroidBridge.setElderLocation(${loc.latitude}, ${loc.longitude}, '${name}', '${time}');",
-                    null
-                )
-            } else {
-                // 无位置数据，显示默认位置
-                webView.evaluateJavascript(
-                    "if(window.AndroidBridge) { initMap(39.9042, 116.4074); document.getElementById('loading').textContent='暂无位置数据，请确保老人端已开启守护'; }",
-                    null
-                )
-            }
-            
-            // 加载围栏数据
-            val fences = CloudBaseClient.getGeofences()
-            if (fences.isNotEmpty()) {
-                webView.evaluateJavascript("if(window.AndroidBridge) AndroidBridge.clearFences();", null)
-                for (fence in fences) {
-                    val isActive = fence.isBreached  // 是否越界
+            try {
+                val status = CloudBaseClient.getElderStatus()
+                if (status != null && status.lastLocation != null) {
+                    val loc = status.lastLocation
+                    val name = status.name.ifEmpty { "老人" }
+                    val time = formatTime(loc.timestamp)
+                    
                     webView.evaluateJavascript(
-                        "if(window.AndroidBridge) AndroidBridge.addFence('${fence.id}', '${fence.name}', ${fence.latitude}, ${fence.longitude}, ${fence.radius}, $isActive);",
+                        "if(window.AndroidBridge) AndroidBridge.setElderLocation(${loc.latitude}, ${loc.longitude}, '${escapeJs(name)}', '${escapeJs(time)}');",
+                        null
+                    )
+                } else {
+                    webView.evaluateJavascript(
+                        "if(window.AndroidBridge) { initMap(39.9042, 116.4074); document.getElementById('loading').textContent='暂无位置数据，请确保老人端已开启守护'; }",
                         null
                     )
                 }
+                
+                // 加载围栏
+                val fences = CloudBaseClient.getGeofences()
+                if (fences.isNotEmpty()) {
+                    webView.evaluateJavascript("if(window.AndroidBridge) AndroidBridge.clearFences();", null)
+                    for (fence in fences) {
+                        webView.evaluateJavascript(
+                            "if(window.AndroidBridge) AndroidBridge.addFence('${escapeJs(fence.id)}', '${escapeJs(fence.name)}', ${fence.latitude}, ${fence.longitude}, ${fence.radius}, ${fence.isBreached});",
+                            null
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+    
+    // === 添加模式 ===
+    private fun setupAddMode() {
+        if (!CloudBaseClient.hasBoundElder()) {
+            Toast.makeText(this, "请先绑定老人设备", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        // 注册 JS 接口
+        webView.addJavascriptInterface(FenceSaveCallback(), "Android")
+        
+        lifecycleScope.launch {
+            try {
+                // 尝试用老人当前位置作为默认圆心
+                val status = CloudBaseClient.getElderStatus()
+                val loc = status?.lastLocation
+                val lat = loc?.latitude ?: 39.9042
+                val lng = loc?.longitude ?: 116.4074
+                
+                if (loc == null) {
+                    Toast.makeText(this@MapActivity, "暂无老人位置，请在地图上拖拽调整", Toast.LENGTH_LONG).show()
+                }
+                
+                // 生成默认名称
+                val fences = CloudBaseClient.getGeofences()
+                val defaultName = "围栏${fences.size + 1}"
+                
+                webView.evaluateJavascript(
+                    "if(window.AndroidBridge) AndroidBridge.setupEditableFence($lat, $lng, 200);",
+                    null
+                )
+                
+                // 设置默认名称
+                webView.evaluateJavascript(
+                    "document.getElementById('fence-name').value = '${escapeJs(defaultName)}';",
+                    null
+                )
+            } catch (e: Exception) {
+                Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    // === 查看单个围栏模式 ===
+    private fun setupViewFenceMode() {
+        val name = intent.getStringExtra("fenceName") ?: "围栏"
+        val lat = intent.getDoubleExtra("fenceLat", 39.9042)
+        val lng = intent.getDoubleExtra("fenceLng", 116.4074)
+        val radius = intent.getIntExtra("fenceRadius", 200)
+        
+        // 注册 JS 接口（查看模式也需要）
+        webView.addJavascriptInterface(FenceSaveCallback(), "Android")
+        
+        webView.evaluateJavascript(
+            "if(window.AndroidBridge) AndroidBridge.showSingleFence('${escapeJs(name)}', $lat, $lng, $radius, false);",
+            null
+        )
+        
+        // 同时加载老人位置
+        lifecycleScope.launch {
+            try {
+                val status = CloudBaseClient.getElderStatus()
+                if (status != null && status.lastLocation != null) {
+                    val loc = status.lastLocation
+                    val elderName = status.name.ifEmpty { "老人" }
+                    webView.evaluateJavascript(
+                        "if(window.AndroidBridge && map) { " +
+                        "var icon = L.divIcon({className:'elder-marker',html:'<div style=\"width:20px;height:20px;background:#F44336;border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);\"></div>',iconSize:[20,20],iconAnchor:[10,10]});" +
+                        "L.marker([${loc.latitude},${loc.longitude}],{icon:icon}).addTo(map).bindPopup('${escapeJs(elderName)}');" +
+                        "}",
+                        null
+                    )
+                }
+            } catch (_: Exception) { }
+        }
+    }
+    
+    // === JS 回调：保存围栏 ===
+    inner class FenceSaveCallback {
+        @android.webkit.JavascriptInterface
+        fun onSaveFence(name: String, lat: Double, lng: Double, radius: Int) {
+            runOnUiThread {
+                val fenceName = name.trim().ifEmpty { "围栏" }
+                val fenceRadius = radius.coerceIn(50, 2000)
+                
+                // 坐标有效性检查
+                if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                    Toast.makeText(this@MapActivity, "坐标无效，请在地图上选择位置", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                
+                // 调用云函数保存
+                lifecycleScope.launch {
+                    try {
+                        val success = CloudBaseClient.addGeofence(fenceName, lat, lng, fenceRadius)
+                        if (success) {
+                            Toast.makeText(this@MapActivity, "围栏「$fenceName」已添加 ✅", Toast.LENGTH_SHORT).show()
+                            finish()
+                        } else {
+                            Toast.makeText(this@MapActivity, "添加围栏失败，请重试", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MapActivity, "添加失败：${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+    
+    private fun escapeJs(s: String): String {
+        return s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "")
     }
     
     private fun formatTime(timestamp: Long): String {

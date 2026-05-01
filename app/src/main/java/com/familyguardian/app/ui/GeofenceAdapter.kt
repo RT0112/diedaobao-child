@@ -8,11 +8,14 @@ import androidx.recyclerview.widget.RecyclerView
 import com.familyguardian.app.cloud.CloudBaseClient.GeofenceInfo
 
 /**
- * 电子围栏列表适配器
+ * 电子围栏列表适配器 v2.0
+ * - 点击：查看地图
+ * - 长按：操作菜单
  */
 class GeofenceAdapter(
     private val fences: List<GeofenceInfo>,
-    private val onClick: (GeofenceInfo) -> Unit
+    private val onClick: (GeofenceInfo) -> Unit,
+    private val onLongClick: (GeofenceInfo) -> Unit
 ) : RecyclerView.Adapter<GeofenceAdapter.FenceViewHolder>() {
     
     class FenceViewHolder(view: View) : RecyclerView.ViewHolder(view) {
@@ -29,18 +32,30 @@ class GeofenceAdapter(
     
     override fun onBindViewHolder(holder: FenceViewHolder, position: Int) {
         val fence = fences[position]
-        holder.tvName.text = "📍 ${fence.name}"
+        
+        // 名称 + 状态图标
+        val statusIcon = if (fence.isBreached) "⚠️" else "✅"
+        holder.tvName.text = "📍 ${fence.name}  ${fence.radius}m  $statusIcon"
         holder.tvName.textSize = 18f
-        holder.tvDetail.text = "中心: ${String.format("%.4f", fence.latitude)}, ${String.format("%.4f", fence.longitude)} | 半径: ${fence.radius}米"
+        
+        // 详情：坐标
+        holder.tvDetail.text = String.format("%.4f, %.4f", fence.latitude, fence.longitude)
         holder.tvDetail.textSize = 14f
         
+        // 越界标红
         if (fence.isBreached) {
             holder.tvName.setTextColor(0xFFF44336.toInt())
         } else {
             holder.tvName.setTextColor(0xFF333333.toInt())
         }
         
+        // 点击 → 查看地图
         holder.itemView.setOnClickListener { onClick(fence) }
+        // 长按 → 操作菜单
+        holder.itemView.setOnLongClickListener { 
+            onLongClick(fence)
+            true
+        }
     }
     
     override fun getItemCount() = fences.size
