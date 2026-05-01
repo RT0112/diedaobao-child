@@ -6,6 +6,7 @@ import android.provider.Settings
 import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,7 +16,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * CloudBase HTTP API 客户端（子女端）
- * v0.4.0: 新增 registerUser() 自动注册
+ * v0.5.0: 新增电子围栏API
  */
 object CloudBaseClient {
     
@@ -30,6 +31,7 @@ object CloudBaseClient {
     private const val KEY_USER_PHONE = "user_phone"
     private const val KEY_ELDER_NAME = "elder_name"
     private const val KEY_ELDER_PHONE = "elder_phone"
+    private const val KEY_GEOFENCES = "geofences_cache"
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
@@ -49,39 +51,13 @@ object CloudBaseClient {
         Log.i(TAG, "CloudBase initialized: userId=$userId, elderId=$elderId")
     }
     
-    /**
-     * 检查是否已注册
-     */
     fun isRegistered(): Boolean = userId != null
-    
-    /**
-     * 检查是否已绑定老人
-     */
     fun hasBoundElder(): Boolean = elderId != null
-    
-    /**
-     * 获取绑定的老人ID
-     */
     fun getElderId(): String? = elderId
-    
-    /**
-     * 获取用户名
-     */
     fun getUserName(): String = prefs.getString(KEY_USER_NAME, "") ?: ""
-    
-    /**
-     * 获取老人姓名
-     */
     fun getElderName(): String = prefs.getString(KEY_ELDER_NAME, "老人") ?: "老人"
-    
-    /**
-     * 获取老人电话
-     */
     fun getElderPhone(): String = prefs.getString(KEY_ELDER_PHONE, "") ?: ""
     
-    /**
-     * 保存老人信息（从 get-status 返回）
-     */
     fun saveElderInfo(name: String?, phone: String?) {
         prefs.edit().apply {
             if (name != null) putString(KEY_ELDER_NAME, name)
@@ -90,12 +66,9 @@ object CloudBaseClient {
         }
     }
     
-    /**
-     * v0.4.0: 自动注册（子女端）
-     * 使用 deviceId 自动注册，无需用户输入
-     */
+    // ========== 自动注册 ==========
+    
     suspend fun autoRegister(context: Context): Boolean {
-        // 已注册则跳过
         if (userId != null) return true
         
         val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
@@ -141,25 +114,20 @@ object CloudBaseClient {
         }
     }
     
-    /**
-     * 绑定老人（输入绑定码）
-     */
+    // ========== 绑定 ==========
+    
     suspend fun bindElder(bindCode: String): BindResult {
         return withContext(Dispatchers.IO) {
             try {
-                // 确保已注册
-                if (userId == null) {
-                    return@withContext BindResult(false, "请先完成注册")
-                }
+                if (userId == null) return@withContext BindResult(false, "请先完成注册")
                 
-                val url = "$BASE_URL/bind-family"
                 val body = JsonObject().apply {
                     addProperty("bindCode", bindCode)
                     addProperty("guardianId", userId)
                 }
                 
                 val request = Request.Builder()
-                    .url(url)
+                    .url("$BASE_URL/bind-family")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
                     .build()
                 
@@ -167,9 +135,7 @@ object CloudBaseClient {
                 val responseBody = response.body?.string()
                 Log.i(TAG, "bindElder response: $responseBody")
                 
-                if (!response.isSuccessful) {
-                    return@withContext BindResult(false, "网络错误(${response.code})")
-                }
+                if (!response.isSuccessful) return@withContext BindResult(false, "网络错误(${response.code})")
                 
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
                 val code = json.get("code")?.asInt ?: 0
@@ -182,7 +148,6 @@ object CloudBaseClient {
                         Log.i(TAG, "Elder bound: $newElderId")
                         BindResult(true, "绑定成功")
                     } else {
-                        // 可能是 Already bound 的情况
                         val msg = json.get("message")?.asString ?: "绑定成功"
                         BindResult(true, msg)
                     }
@@ -197,33 +162,22 @@ object CloudBaseClient {
         }
     }
     
-    /**
-     * 解绑老人
-     */
     fun unbindElder() {
         elderId = null
         prefs.edit().remove(KEY_ELDER_ID).apply()
     }
     
-    /**
-     * 获取老人状态
-     */
+    // ========== 老人状态 ==========
+    
     suspend fun getElderStatus(): ElderStatus? {
         return withContext(Dispatchers.IO) {
             try {
                 val eid = elderId ?: return@withContext null
                 val url = "$BASE_URL/get-status?elderId=$eid"
                 
-                val request = Request.Builder()
-                    .url(url)
-                    .get()
-                    .build()
-                
+                val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "getElderStatus failed: ${response.code}")
-                    return@withContext null
-                }
+                if (!response.isSuccessful) return@withContext null
                 
                 val responseBody = response.body?.string()
                 gson.fromJson(responseBody, ElderStatus::class.java)
@@ -234,25 +188,17 @@ object CloudBaseClient {
         }
     }
     
-    /**
-     * 获取跌倒历史
-     */
+    // ========== 跌倒历史 ==========
+    
     suspend fun getFallHistory(limit: Int = 20): List<FallEvent> {
         return withContext(Dispatchers.IO) {
             try {
                 val eid = elderId ?: return@withContext emptyList()
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$limit"
                 
-                val request = Request.Builder()
-                    .url(url)
-                    .get()
-                    .build()
-                
+                val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "getFallHistory failed: ${response.code}")
-                    return@withContext emptyList()
-                }
+                if (!response.isSuccessful) return@withContext emptyList()
                 
                 val responseBody = response.body?.string()
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
@@ -265,7 +211,138 @@ object CloudBaseClient {
         }
     }
     
-    // 数据类
+    // ========== 电子围栏 ==========
+    
+    /**
+     * 获取围栏列表
+     * 先从缓存取，然后异步更新
+     */
+    suspend fun getGeofences(): List<GeofenceInfo> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val eid = elderId ?: return@withContext emptyList()
+                val body = JsonObject().apply {
+                    addProperty("action", "list")
+                    addProperty("elderId", eid)
+                    addProperty("creatorId", userId ?: "")
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/geofence")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "getGeofences failed: ${response.code}")
+                    return@withContext getCachedGeofences()
+                }
+                
+                val responseBody = response.body?.string()
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                if (json.get("success")?.asBoolean != true) {
+                    Log.e(TAG, "getGeofences server error: ${json.get("message")?.asString}")
+                    return@withContext getCachedGeofences()
+                }
+                val fencesArray = json.getAsJsonArray("fences")
+                
+                val fences = fencesArray.map { element ->
+                    val obj = element.asJsonObject
+                    GeofenceInfo(
+                        id = obj.get("id").asString,
+                        name = obj.get("name").asString,
+                        latitude = obj.get("latitude").asDouble,
+                        longitude = obj.get("longitude").asDouble,
+                        radius = obj.get("radius").asInt,
+                        isBreached = obj.get("isBreached")?.asBoolean ?: false,
+                        createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
+                    )
+                }
+                
+                cacheGeofences(fences)
+                fences
+            } catch (e: Exception) {
+                Log.e(TAG, "getGeofences error", e)
+                getCachedGeofences()
+            }
+        }
+    }
+    
+    /**
+     * 添加围栏
+     */
+    suspend fun addGeofence(name: String, latitude: Double, longitude: Double, radius: Int): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val eid = elderId ?: return@withContext false
+                val body = JsonObject().apply {
+                    addProperty("action", "create")
+                    addProperty("elderId", eid)
+                    addProperty("creatorId", userId ?: "")
+                    addProperty("name", name)
+                    addProperty("latitude", latitude)
+                    addProperty("longitude", longitude)
+                    addProperty("radius", radius)
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/geofence")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val success = response.isSuccessful
+                Log.i(TAG, "addGeofence: $success")
+                success
+            } catch (e: Exception) {
+                Log.e(TAG, "addGeofence error", e)
+                false
+            }
+        }
+    }
+    
+    /**
+     * 删除围栏
+     */
+    suspend fun deleteGeofence(fenceId: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = JsonObject().apply {
+                    addProperty("action", "delete")
+                    addProperty("fenceId", fenceId)
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/geofence")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val success = response.isSuccessful
+                Log.i(TAG, "deleteGeofence: $success")
+                success
+            } catch (e: Exception) {
+                Log.e(TAG, "deleteGeofence error", e)
+                false
+            }
+        }
+    }
+    
+    private fun cacheGeofences(fences: List<GeofenceInfo>) {
+        prefs.edit().putString(KEY_GEOFENCES, gson.toJson(fences)).apply()
+    }
+    
+    private fun getCachedGeofences(): List<GeofenceInfo> {
+        val json = prefs.getString(KEY_GEOFENCES, null) ?: return emptyList()
+        return try {
+            val type = object : TypeToken<List<GeofenceInfo>>() {}.type
+            gson.fromJson(json, type)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+    
+    // ========== 数据类 ==========
+    
     data class BindResult(val success: Boolean, val message: String)
     
     data class ElderStatus(
@@ -289,5 +366,15 @@ object CloudBaseClient {
         val longitude: Double?,
         val impactG: Double,
         val mlScore: Double
+    )
+    
+    data class GeofenceInfo(
+        val id: String,
+        val name: String,
+        val latitude: Double,
+        val longitude: Double,
+        val radius: Int,
+        val isBreached: Boolean = false,
+        val createdAt: Long = System.currentTimeMillis()
     )
 }

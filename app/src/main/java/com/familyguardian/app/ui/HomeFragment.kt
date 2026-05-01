@@ -1,15 +1,10 @@
 package com.familyguardian.app.ui
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -26,19 +21,6 @@ class HomeFragment : Fragment() {
     private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
     private val elderName by lazy { CloudBaseClient.getElderName() }
-    private val elderPhone by lazy { CloudBaseClient.getElderPhone() }
-    
-    // 拨打电话权限
-    private val callPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            makeCall()
-        } else {
-            // 没有权限就用拨号盘（不需要权限）
-            dialPhone()
-        }
-    }
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -55,9 +37,8 @@ class HomeFragment : Fragment() {
         // 绑定按钮
         b.btnBind.setOnClickListener { onBindClick() }
         
-        // 操作按钮
+        // 查看位置按钮 → 打开地图Activity
         b.btnViewLocation.setOnClickListener { onViewLocation() }
-        b.btnCallElder.setOnClickListener { onCallElder() }
         
         // 首次启动自动注册
         ensureRegistered()
@@ -161,7 +142,7 @@ class HomeFragment : Fragment() {
             if (status != null) {
                 b.tvElderName.text = status.name.ifEmpty { elderName }
                 
-                // 保存老人信息供拨打电话使用
+                // 保存老人信息
                 CloudBaseClient.saveElderInfo(status.name, null)
                 
                 val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
@@ -177,11 +158,11 @@ class HomeFragment : Fragment() {
                 val timeStr = formatTime(status.lastUpdate)
                 b.tvLastUpdate.text = "最后更新：$timeStr"
                 
-                // 位置状态提示
+                // 位置状态
                 if (status.lastLocation != null) {
                     b.btnViewLocation.text = "📍 查看位置"
                 } else {
-                    b.btnViewLocation.text = "📍 暂无位置"
+                    b.btnViewLocation.text = "📍 查看位置"
                 }
             } else {
                 b.tvElderName.text = elderName
@@ -191,60 +172,16 @@ class HomeFragment : Fragment() {
         }
     }
     
+    /**
+     * 查看位置 → 打开地图Activity
+     */
     private fun onViewLocation() {
         if (!CloudBaseClient.hasBoundElder()) {
             Toast.makeText(requireContext(), "请先绑定老人设备", Toast.LENGTH_SHORT).show()
             return
         }
         
-        lifecycleScope.launch {
-            val status = CloudBaseClient.getElderStatus()
-            val location = status?.lastLocation
-            
-            if (location != null && location.latitude != 0.0 && location.longitude != 0.0) {
-                // 有位置数据 → 打开地图
-                val uri = Uri.parse("geo:${location.latitude},${location.longitude}?q=${location.latitude},${location.longitude}(老人位置)")
-                val intent = Intent(Intent.ACTION_VIEW, uri)
-                if (intent.resolveActivity(requireContext().packageManager) != null) {
-                    startActivity(intent)
-                } else {
-                    // 没有地图应用，复制坐标
-                    val coord = "${location.latitude}, ${location.longitude}"
-                    val cm = requireContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    cm.setPrimaryClip(android.content.ClipData.newPlainText("坐标", coord))
-                    Toast.makeText(requireContext(), "位置：$coord（已复制）", Toast.LENGTH_LONG).show()
-                }
-            } else {
-                // 无位置数据 → 提示原因
-                Toast.makeText(requireContext(), "暂无位置数据\n请确保老人端已开启守护并授权定位", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    
-    private fun onCallElder() {
-        if (!CloudBaseClient.hasBoundElder()) {
-            Toast.makeText(requireContext(), "请先绑定老人设备", Toast.LENGTH_SHORT).show()
-            return
-        }
-        
-        // 有 CALL_PHONE 权限 → 直接拨号；没有 → 用拨号盘
-        if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-            makeCall()
-        } else {
-            // 请求权限，被拒绝后 fallback 到拨号盘
-            callPermission.launch(Manifest.permission.CALL_PHONE)
-        }
-    }
-    
-    /** 直接拨打电话（需要 CALL_PHONE 权限） */
-    private fun makeCall() {
-        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:$elderPhone"))
-        startActivity(intent)
-    }
-    
-    /** 打开拨号盘（不需要权限） */
-    private fun dialPhone() {
-        val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$elderPhone"))
+        val intent = android.content.Intent(requireContext(), MapActivity::class.java)
         startActivity(intent)
     }
     

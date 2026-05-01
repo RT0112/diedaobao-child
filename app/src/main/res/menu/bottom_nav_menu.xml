@@ -5,6 +5,10 @@
         android:icon="@android:drawable/ic_menu_myplaces"
         android:title="@string/title_home" />
     <item
+        android:id="@+id/nav_geofence"
+        android:icon="@android:drawable/ic_menu_compass"
+        android:title="@string/title_geofence" />
+    <item
         android:id="@+id/nav_history"
         android:icon="@android:drawable/ic_menu_recent_history"
         android:title="@string/title_history" />

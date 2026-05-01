@@ -2,6 +2,7 @@
 <resources>
     <string name="app_name">亲情守护</string>
     <string name="title_home">首页</string>
+    <string name="title_geofence">围栏</string>
     <string name="title_history">历史</string>
     <string name="title_settings">设置</string>
     
@@ -11,7 +12,11 @@
     <string name="status_warning">有跌倒风险</string>
     <string name="last_update">最后更新：%s</string>
     <string name="view_location">查看位置</string>
-    <string name="call_elder">拨打电话</string>
+    
+    <!-- Geofence -->
+    <string name="geofence_title">电子围栏</string>
+    <string name="add_geofence">添加电子围栏</string>
+    <string name="geofence_empty">暂无电子围栏</string>
     
     <!-- History -->
     <string name="fall_history">跌倒历史</string>

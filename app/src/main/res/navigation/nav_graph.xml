@@ -10,6 +10,11 @@
         android:label="@string/title_home" />
 
     <fragment
+        android:id="@+id/nav_geofence"
+        android:name="com.familyguardian.app.ui.GeofenceFragment"
+        android:label="@string/title_geofence" />
+
+    <fragment
         android:id="@+id/nav_history"
         android:name="com.familyguardian.app.ui.HistoryFragment"
         android:label="@string/title_history" />
