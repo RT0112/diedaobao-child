@@ -1,58 +1,69 @@
 package com.familyguardian.app.ui
 
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
-import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.familyguardian.app.cloud.CloudBaseClient.GeofenceInfo
+import com.familyguardian.app.databinding.ItemGeofenceBinding
 
 /**
- * 电子围栏列表适配器 v2.0
- * - 点击：查看地图
- * - 长按：操作菜单
+ * 电子围栏列表适配器 v2.1
+ * - 自定义布局 item_geofence.xml，替代不稳定的 android.R.layout.simple_list_item_2
+ * - 点击：查看地图 / 长按：操作菜单
+ * - 使用 viewBinding，安全
  */
 class GeofenceAdapter(
     private val fences: List<GeofenceInfo>,
-    private val onClick: (GeofenceInfo) -> Unit,
-    private val onLongClick: (GeofenceInfo) -> Unit
+    private val onItemClick: (GeofenceInfo) -> Unit,
+    private val onItemLongClick: (GeofenceInfo) -> Unit
 ) : RecyclerView.Adapter<GeofenceAdapter.FenceViewHolder>() {
     
-    class FenceViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-        val tvName: TextView = view.findViewById(android.R.id.title)
-        val tvDetail: TextView = view.findViewById(android.R.id.summary)
+    class FenceViewHolder(
+        private val binding: ItemGeofenceBinding,
+        private val onClick: (GeofenceInfo) -> Unit,
+        private val onLongClick: (GeofenceInfo) -> Unit
+    ) : RecyclerView.ViewHolder(binding.root) {
+        
+        private var fence: GeofenceInfo? = null
+        
+        init {
+            binding.root.setOnClickListener {
+                fence?.let { onClick(it) }
+            }
+            binding.root.setOnLongClickListener {
+                fence?.let { onLongClick(it) }
+                true
+            }
+        }
+        
+        fun bind(item: GeofenceInfo) {
+            fence = item
+            // 名称 + 状态图标
+            val statusIcon = if (item.isBreached) "⚠️" else "✅"
+            binding.tvName.text = "📍 ${item.name}  ${item.radius}m  $statusIcon"
+            
+            // 详情：坐标
+            binding.tvDetail.text = String.format("%.4f, %.4f", item.latitude, item.longitude)
+            
+            // 越界标红
+            val textColor = if (item.isBreached) {
+                itemView.context.getColor(android.R.color.holo_red_dark)
+            } else {
+                itemView.context.getColor(android.R.color.darker_gray)
+            }
+            binding.tvName.setTextColor(textColor)
+        }
     }
     
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FenceViewHolder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(android.R.layout.simple_list_item_2, parent, false)
-        view.setPadding(32, 24, 32, 24)
-        return FenceViewHolder(view)
+        val binding = ItemGeofenceBinding.inflate(
+            LayoutInflater.from(parent.context), parent, false
+        )
+        return FenceViewHolder(binding, onItemClick, onItemLongClick)
     }
     
     override fun onBindViewHolder(holder: FenceViewHolder, position: Int) {
-        val fence = fences[position]
-        
-        // 名称 + 状态图标
-        val statusIcon = if (fence.isBreached) "⚠️" else "✅"
-        holder.tvName.text = "📍 ${fence.name}  ${fence.radius}m  $statusIcon"
-        holder.tvName.textSize = 18f
-        
-        // 详情：坐标
-        holder.tvDetail.text = String.format("%.4f, %.4f", fence.latitude, fence.longitude)
-        holder.tvDetail.textSize = 14f
-        
-        // 越界标红（用 ?android:attr/textColorPrimary 等价，安全）
-        val textColor = if (fence.isBreached) 0xFFB71C1C.toInt() else 0xFF333333.toInt()
-        holder.tvName.setTextColor(textColor)
-        
-        // 点击 → 查看地图
-        holder.itemView.setOnClickListener { onClick(fence) }
-        // 长按 → 操作菜单
-        holder.itemView.setOnLongClickListener { 
-            onLongClick(fence)
-            true
-        }
+        holder.bind(fences[position])
     }
     
     override fun getItemCount() = fences.size

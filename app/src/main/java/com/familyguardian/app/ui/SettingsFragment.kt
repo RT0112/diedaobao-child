@@ -77,8 +77,10 @@ class SettingsFragment : Fragment() {
     }
     
     private fun showAbout() {
+        if (!isAdded) return
+        val context = context ?: return
         val version = try {
-            requireContext().packageManager.getPackageInfo(requireContext().packageName, 0).versionName
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
         } catch (e: Exception) { "未知" }
         
         AlertDialog.Builder(requireContext())

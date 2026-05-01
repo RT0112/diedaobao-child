@@ -14,4 +14,6 @@
     <color name="accent">#FFFF9800</color>
     <color name="warning">#FFFF5722</color>
     <color name="danger">#FFF44336</color>
+    <color name="text_primary">#FF333333</color>
+    <color name="text_secondary">#FF666666</color>
 </resources>

@@ -41,9 +41,9 @@ class GeofenceFragment : Fragment() {
         
         val b = _binding ?: return
         
-        adapter = GeofenceAdapter(fences, 
-            onClick = { fence -> openMapForView(fence) },
-            onLongClick = { fence -> showFenceOptions(fence) }
+        adapter = GeofenceAdapter(fences,
+            onItemClick = { fence -> openMapForView(fence) },
+            onItemLongClick = { fence -> showFenceOptions(fence) }
         )
         
         b.recyclerFences.layoutManager = LinearLayoutManager(requireContext())

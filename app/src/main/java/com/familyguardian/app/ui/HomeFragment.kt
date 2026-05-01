@@ -146,6 +146,7 @@ class HomeFragment : Fragment() {
     
     private fun loadElderStatus() {
         if (!isAdded) return
+        if (_binding == null) return
         if (!CloudBaseClient.hasBoundElder()) return
         
         viewLifecycleOwner.lifecycleScope.launch {
