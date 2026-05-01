@@ -53,7 +53,7 @@ class HomeFragment : Fragment() {
      */
     private fun ensureRegistered() {
         if (!CloudBaseClient.isRegistered()) {
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 val success = CloudBaseClient.autoRegister(requireContext())
                 if (!success) {
                     Toast.makeText(requireContext(), "网络注册失败，部分功能不可用", Toast.LENGTH_LONG).show()
@@ -98,7 +98,7 @@ class HomeFragment : Fragment() {
         
         // 先确保已注册
         if (!CloudBaseClient.isRegistered()) {
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 val registered = CloudBaseClient.autoRegister(requireContext())
                 if (!registered) {
                     showBindError("注册失败，请检查网络")
@@ -117,9 +117,10 @@ class HomeFragment : Fragment() {
         b.btnBind.text = "绑定中..."
         b.tvBindError.visibility = View.GONE
         
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             val result = CloudBaseClient.bindElder(code)
             
+            if (!isAdded) return@launch
             _binding?.let { b ->
                 b.btnBind.isEnabled = true
                 b.btnBind.text = "绑定"
@@ -127,7 +128,7 @@ class HomeFragment : Fragment() {
                 if (result.success) {
                     Toast.makeText(requireContext(), "绑定成功！", Toast.LENGTH_SHORT).show()
                     b.etBindCode.text?.clear()
-                    updateUI()
+                    if (isAdded) updateUI()
                 } else {
                     showBindError(result.message)
                 }
@@ -136,6 +137,7 @@ class HomeFragment : Fragment() {
     }
     
     private fun showBindError(message: String) {
+        if (!isAdded) return
         _binding?.let { b ->
             b.tvBindError.text = message
             b.tvBindError.visibility = View.VISIBLE
@@ -143,10 +145,15 @@ class HomeFragment : Fragment() {
     }
     
     private fun loadElderStatus() {
+        if (!isAdded) return
         if (!CloudBaseClient.hasBoundElder()) return
         
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
+            if (!isAdded) return@launch
+            
             val status = CloudBaseClient.getElderStatus()
+            if (!isAdded) return@launch
+            
             _binding?.let { b ->
                 if (status != null) {
                     b.tvElderName.text = status.name.ifEmpty { elderName }

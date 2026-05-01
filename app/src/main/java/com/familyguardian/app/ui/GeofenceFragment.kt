@@ -15,18 +15,17 @@ import com.familyguardian.app.databinding.FragmentGeofenceBinding
 import kotlinx.coroutines.launch
 
 /**
- * 电子围栏页面 v2.0
- * - 显示围栏列表
- * - 添加围栏 → 打开地图页（拖拽画圆）
- * - 删除围栏
- * - 查看围栏 → 打开地图页（定位到围栏）
+ * 电子围栏页面 v2.0 (v0.6.4 修复版)
+ * - 最高防御级别：所有binding访问都在guard下
+ * - 使用 viewLifecycleOwner.lifecycleScope
+ * - 所有网络操作加 try-catch
  */
 class GeofenceFragment : Fragment() {
     
     private var _binding: FragmentGeofenceBinding? = null
     
     private lateinit var adapter: GeofenceAdapter
-    private var fences = mutableListOf<GeofenceInfo>()
+    private val fences = mutableListOf<GeofenceInfo>()
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -54,13 +53,17 @@ class GeofenceFragment : Fragment() {
         b.btnAddFence.setOnClickListener { openMapForAdd() }
         
         // 刷新
-        b.swipeRefresh.setOnRefreshListener { loadFences() }
+        b.swipeRefresh.setOnRefreshListener { 
+            if (isAdded) loadFences() 
+        }
         
         // 加载围栏
-        loadFences()
+        if (isAdded) loadFences()
     }
     
     private fun loadFences() {
+        // 安全检查
+        if (!isAdded || _binding == null) return
         if (!CloudBaseClient.hasBoundElder()) {
             _binding?.let { b ->
                 b.layoutEmpty.visibility = View.VISIBLE
@@ -73,12 +76,15 @@ class GeofenceFragment : Fragment() {
         
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                if (!isAdded) return@launch
+                
                 fences.clear()
                 val loaded = CloudBaseClient.getGeofences()
                 fences.addAll(loaded)
-                adapter.notifyDataSetChanged()
                 
+                if (!isAdded) return@launch
                 _binding?.let { b ->
+                    adapter.notifyDataSetChanged()
                     b.swipeRefresh.isRefreshing = false
                     
                     if (fences.isEmpty()) {
@@ -91,8 +97,10 @@ class GeofenceFragment : Fragment() {
                     }
                 }
             } catch (e: Exception) {
-                _binding?.swipeRefresh?.isRefreshing = false
-                Toast.makeText(requireContext(), "加载围栏失败：${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded) {
+                    _binding?.swipeRefresh?.isRefreshing = false
+                    Toast.makeText(requireContext(), "加载围栏失败：${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -101,6 +109,7 @@ class GeofenceFragment : Fragment() {
      * 打开地图页 — 添加围栏模式
      */
     private fun openMapForAdd() {
+        if (!isAdded) return
         if (!CloudBaseClient.hasBoundElder()) {
             Toast.makeText(requireContext(), "请先绑定老人设备", Toast.LENGTH_SHORT).show()
             return
@@ -115,6 +124,7 @@ class GeofenceFragment : Fragment() {
      * 打开地图页 — 查看单个围栏
      */
     private fun openMapForView(fence: GeofenceInfo) {
+        if (!isAdded) return
         val intent = Intent(requireContext(), MapActivity::class.java).apply {
             putExtra("mode", "view_fence")
             putExtra("fenceId", fence.id)
@@ -130,10 +140,12 @@ class GeofenceFragment : Fragment() {
      * 长按围栏 → 操作菜单
      */
     private fun showFenceOptions(fence: GeofenceInfo) {
+        if (!isAdded) return
         val options = arrayOf("📍 在地图上查看", "🗑️ 删除围栏")
         android.app.AlertDialog.Builder(requireContext())
             .setTitle(fence.name)
             .setItems(options) { _, which ->
+                if (!isAdded) return@setItems
                 when (which) {
                     0 -> openMapForView(fence)
                     1 -> confirmDelete(fence)
@@ -143,18 +155,27 @@ class GeofenceFragment : Fragment() {
     }
     
     private fun confirmDelete(fence: GeofenceInfo) {
+        if (!isAdded) return
         android.app.AlertDialog.Builder(requireContext())
             .setTitle("确认删除")
             .setMessage("确定要删除围栏「${fence.name}」吗？")
-            .setPositiveButton("删除") { _, _ -> deleteFence(fence) }
+            .setPositiveButton("删除") { _, _ -> 
+                if (isAdded) deleteFence(fence) 
+            }
             .setNegativeButton("取消", null)
             .show()
     }
     
     private fun deleteFence(fence: GeofenceInfo) {
+        if (!isAdded) return
+        
         viewLifecycleOwner.lifecycleScope.launch {
             try {
+                if (!isAdded) return@launch
+                
                 val success = CloudBaseClient.deleteGeofence(fence.id)
+                if (!isAdded) return@launch
+                
                 if (success) {
                     Toast.makeText(requireContext(), "围栏「${fence.name}」已删除", Toast.LENGTH_SHORT).show()
                     loadFences()
@@ -162,14 +183,16 @@ class GeofenceFragment : Fragment() {
                     Toast.makeText(requireContext(), "删除失败，请重试", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Toast.makeText(requireContext(), "删除失败：${e.message}", Toast.LENGTH_SHORT).show()
+                if (isAdded) {
+                    Toast.makeText(requireContext(), "删除失败：${e.message}", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
     
     override fun onResume() {
         super.onResume()
-        loadFences()
+        if (isAdded) loadFences()
     }
     
     override fun onDestroyView() {

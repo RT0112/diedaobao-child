@@ -51,16 +51,24 @@ class HistoryFragment : Fragment() {
             return
         }
         
-        lifecycleScope.launch {
-            val events = CloudBaseClient.getFallHistory(30)
-            
-            _binding?.let { b ->
-                if (events.isEmpty()) {
-                    // 显示空状态（简单的 TextView 替代空视图）
-                    adapter.submitList(emptyList())
-                    Toast.makeText(requireContext(), "暂无跌倒记录", Toast.LENGTH_SHORT).show()
-                } else {
-                    adapter.submitList(events)
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (!isAdded) return@launch
+                
+                val events = CloudBaseClient.getFallHistory(30)
+                if (!isAdded) return@launch
+                
+                _binding?.let { b ->
+                    if (events.isEmpty()) {
+                        adapter.submitList(emptyList())
+                        Toast.makeText(requireContext(), "暂无跌倒记录", Toast.LENGTH_SHORT).show()
+                    } else {
+                        adapter.submitList(events)
+                    }
+                }
+            } catch (e: Exception) {
+                if (isAdded) {
+                    Toast.makeText(requireContext(), "加载历史失败：${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
