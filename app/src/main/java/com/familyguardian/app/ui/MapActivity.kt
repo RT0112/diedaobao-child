@@ -620,16 +620,18 @@ window.AndroidBridge = {
                 
                 // 调用云函数保存
                 lifecycleScope.launch {
-                    try {
-                        val success = CloudBaseClient.addGeofence(fenceName, lat, lng, fenceRadius)
-                        if (success) {
-                            Toast.makeText(this@MapActivity, "围栏「$fenceName」已添加 ✅", Toast.LENGTH_SHORT).show()
-                            finish()
+                    val errorMsg = CloudBaseClient.addGeofence(fenceName, lat, lng, fenceRadius)
+                    if (errorMsg.isEmpty()) {
+                        Toast.makeText(this@MapActivity, "围栏「$fenceName」已添加 ✅", Toast.LENGTH_SHORT).show()
+                        finish()
+                    } else {
+                        // 详细错误信息反馈给用户
+                        val hint = if (errorMsg.contains("elderId") || errorMsg.contains("绑定")) {
+                            "请先在首页绑定老人设备"
                         } else {
-                            Toast.makeText(this@MapActivity, "添加围栏失败，请重试", Toast.LENGTH_SHORT).show()
+                            errorMsg
                         }
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MapActivity, "添加失败：${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MapActivity, "添加失败：$hint", Toast.LENGTH_LONG).show()
                     }
                 }
             }

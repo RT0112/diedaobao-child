@@ -280,10 +280,15 @@ object CloudBaseClient {
     /**
      * 添加围栏
      */
-    suspend fun addGeofence(name: String, latitude: Double, longitude: Double, radius: Int): Boolean {
+    suspend fun addGeofence(name: String, latitude: Double, longitude: Double, radius: Int): String {
         return withContext(Dispatchers.IO) {
             try {
-                val eid = elderId ?: return@withContext false
+                val eid = elderId
+                if (eid == null) {
+                    Log.e(TAG, "addGeofence: elderId is null, not bound")
+                    return@withContext "请先绑定老人设备"
+                }
+                
                 val body = JsonObject().apply {
                     addProperty("action", "create")
                     addProperty("elderId", eid)
@@ -300,12 +305,24 @@ object CloudBaseClient {
                     .build()
                 
                 val response = client.newCall(request).execute()
-                val success = response.isSuccessful
-                Log.i(TAG, "addGeofence: $success")
-                success
+                val responseBody = response.body?.string() ?: ""
+                Log.i(TAG, "addGeofence response: $responseBody")
+                
+                if (!response.isSuccessful) {
+                    return@withContext "网络错误(${response.code})"
+                }
+                
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val success = json.get("success")?.asBoolean ?: false
+                if (!success) {
+                    val msg = json.get("message")?.asString ?: "保存失败"
+                    return@withContext msg
+                }
+                
+                ""
             } catch (e: Exception) {
                 Log.e(TAG, "addGeofence error", e)
-                false
+                "网络异常：${e.message}"
             }
         }
     }
