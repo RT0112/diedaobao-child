@@ -245,17 +245,27 @@ object CloudBaseClient {
                 }
                 val fencesArray = json.getAsJsonArray("fences")
                 
-                val fences = fencesArray.map { element ->
-                    val obj = element.asJsonObject
-                    GeofenceInfo(
-                        id = obj.get("id").asString,
-                        name = obj.get("name").asString,
-                        latitude = obj.get("latitude").asDouble,
-                        longitude = obj.get("longitude").asDouble,
-                        radius = obj.get("radius").asInt,
-                        isBreached = obj.get("isBreached")?.asBoolean ?: false,
-                        createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
-                    )
+                val fences = fencesArray.mapNotNull { element ->
+                    try {
+                        val obj = element.asJsonObject
+                        val id = obj.get("id")?.asString ?: return@mapNotNull null
+                        val name = obj.get("name")?.asString ?: "未命名围栏"
+                        val latitude = obj.get("latitude")?.asDouble ?: return@mapNotNull null
+                        val longitude = obj.get("longitude")?.asDouble ?: return@mapNotNull null
+                        val radius = obj.get("radius")?.asInt ?: 200
+                        GeofenceInfo(
+                            id = id,
+                            name = name,
+                            latitude = latitude,
+                            longitude = longitude,
+                            radius = radius,
+                            isBreached = obj.get("isBreached")?.asBoolean ?: false,
+                            createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to parse fence: ${e.message}")
+                        null
+                    }
                 }
                 
                 cacheGeofences(fences)
@@ -335,10 +345,18 @@ object CloudBaseClient {
         val json = prefs.getString(KEY_GEOFENCES, null) ?: return emptyList()
         return try {
             val type = object : TypeToken<List<GeofenceInfo>>() {}.type
-            gson.fromJson(json, type)
+            val fences = gson.fromJson<List<GeofenceInfo>>(json, type)
+            // 过滤掉无效数据
+            fences.filter { it.id.isNotBlank() && it.name.isNotBlank() }
         } catch (e: Exception) {
+            Log.e(TAG, "getCachedGeofences error, clearing cache", e)
+            clearGeofenceCache()
             emptyList()
         }
+    }
+    
+    fun clearGeofenceCache() {
+        prefs.edit().remove(KEY_GEOFENCES).apply()
     }
     
     // ========== 数据类 ==========
