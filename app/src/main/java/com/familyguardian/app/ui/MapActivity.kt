@@ -14,7 +14,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -35,6 +37,9 @@ class MapActivity : AppCompatActivity() {
     private var addFenceLat = 0.0
     private var addFenceLng = 0.0
     private var addFenceRadius = 200
+    
+    // 定时同步 Job（防止无限循环协程在Activity销毁后继续运行导致崩溃）
+    private var jsSyncJob: Job? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -661,23 +666,35 @@ window.AndroidBridge = {
     /**
      * 定时从 JS 同步坐标到 Kotlin（用于原生保存按钮）
      */
+    /**
+     * 定时从 JS 同步坐标到 Kotlin（用于原生保存按钮）。
+     * 存储 Job 引用，Activity 销毁时由 onDestroy 取消，防止崩溃。
+     */
     private fun scheduleJsSync() {
-        lifecycleScope.launch {
-            while (true) {
+        jsSyncJob = lifecycleScope.launch {
+            while (isActive) {
                 delay(500)
-                // 读取 JS 中的 currentCenter 和 currentRadius
-                webView.evaluateJavascript(
-                    """
-                    if (window.AndroidBridge && typeof currentCenter !== 'undefined' && currentCenter) {
-                        window.AndroidBridge.syncFenceValues(
-                            currentCenter.lat,
-                            currentCenter.lng,
-                            currentRadius
-                        );
+                try {
+                    if (!isFinishing) {
+                        webView.evaluateJavascript(
+                            """
+                            if (window.AndroidBridge && typeof currentCenter !== 'undefined' && currentCenter) {
+                                window.AndroidBridge.syncFenceValues(
+                                    currentCenter.lat,
+                                    currentCenter.lng,
+                                    currentRadius
+                                );
+                            }
+                            """.trimIndent(),
+                            null
+                        )
+                    } else {
+                        break
                     }
-                    """.trimIndent(),
-                    null
-                )
+                } catch (e: Exception) {
+                    // WebView 不可用时静默退出
+                    break
+                }
             }
         }
     }
@@ -826,6 +843,8 @@ window.AndroidBridge = {
     }
     
     override fun onDestroy() {
+        // 取消定时同步，防止 WebView destroy 后协程继续运行导致崩溃
+        jsSyncJob?.cancel()
         webView.destroy()
         super.onDestroy()
     }
