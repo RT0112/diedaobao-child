@@ -5,7 +5,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
@@ -173,11 +172,7 @@ class HomeFragment : Fragment() {
                     val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
                     b.tvStatus.text = statusText
                     b.tvStatus.setTextColor(
-                        ContextCompat.getColor(
-                            requireContext(),
-                            if (status.status == "fallen") android.R.color.holo_red_dark
-                            else android.R.color.holo_green_dark
-                        )
+                        if (status.status == "fallen") 0xFFF44336.toInt() else 0xFF4CAF50.toInt()
                     )
                     
                     val timeStr = formatTime(status.lastUpdate)
@@ -194,7 +189,7 @@ class HomeFragment : Fragment() {
                 } else {
                     b.tvElderName.text = elderName
                     b.tvStatus.text = "获取状态失败"
-                    b.tvStatus.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
+                    b.tvStatus.setTextColor(0xFF666666.toInt())
                 }
             }
         }

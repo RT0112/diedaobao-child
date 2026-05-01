@@ -45,13 +45,13 @@ class GeofenceAdapter(
             // 详情：坐标
             binding.tvDetail.text = String.format("%.4f, %.4f", item.latitude, item.longitude)
             
-            // 越界标红
+            // 越界标红（硬编码颜色避免R引用问题）
             val textColor = if (item.isBreached) {
-                itemView.context.getColor(android.R.color.holo_red_dark)
+                0xFFF44336.toInt() // danger red
             } else {
-                itemView.context.getColor(android.R.color.darker_gray)
+                0xFF666666.toInt() // text_secondary
             }
-            binding.tvName.setTextColor(textColor)
+            binding.tvName.setTextColor(if (item.isBreached) 0xFFF44336.toInt() else 0xFF666666.toInt())
         }
     }
     
