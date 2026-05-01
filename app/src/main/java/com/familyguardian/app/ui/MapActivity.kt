@@ -8,6 +8,7 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
+import android.util.Log
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -23,7 +24,7 @@ import kotlinx.coroutines.launch
  * 使用 Leaflet + 高德瓦片地图（免费无需API Key）
  */
 class MapActivity : AppCompatActivity() {
-    
+    private val TAG = "MapActivity"
     private lateinit var webView: WebView
     private var currentMode = "view"
     
@@ -505,8 +506,13 @@ window.AndroidBridge = {
                         null
                     )
                 } else {
+                    // 无位置时：只提示，不在默认位置画标记（避免误导）
                     webView.evaluateJavascript(
-                        "if(window.AndroidBridge) { initMap(39.9042, 116.4074); document.getElementById('loading').textContent='暂无位置数据，请确保老人端已开启守护'; }",
+                        "if(window.AndroidBridge) { " +
+                        "initMap(39.9042, 116.4074); " +
+                        "document.getElementById('loading').textContent = '📍 暂无位置数据，请确保老人端已开启守护并允许定位权限'; " +
+                        "document.getElementById('loading').style.display = 'block'; " +
+                        "}",
                         null
                     )
                 }
@@ -606,9 +612,19 @@ window.AndroidBridge = {
     
     // === JS 回调：保存围栏 ===
     inner class FenceSaveCallback {
+        private var lastCallMs = 0L
+        
         @android.webkit.JavascriptInterface
         fun onSaveFence(name: String, lat: Double, lng: Double, radius: Int) {
             runOnUiThread {
+                // 防抖：1秒内只响应一次
+                val now = System.currentTimeMillis()
+                if (now - lastCallMs < 1000) {
+                    Log.d(TAG, "onSaveFence: ignored (debounce)")
+                    return@runOnUiThread
+                }
+                lastCallMs = now
+                
                 val fenceName = name.trim().ifEmpty { "围栏" }
                 val fenceRadius = radius.coerceIn(50, 2000)
                 
@@ -618,6 +634,9 @@ window.AndroidBridge = {
                     return@runOnUiThread
                 }
                 
+                // 立即显示加载状态
+                Toast.makeText(this@MapActivity, "正在保存...", Toast.LENGTH_SHORT).show()
+                
                 // 调用云函数保存
                 lifecycleScope.launch {
                     val errorMsg = CloudBaseClient.addGeofence(fenceName, lat, lng, fenceRadius)
@@ -626,10 +645,10 @@ window.AndroidBridge = {
                         finish()
                     } else {
                         // 详细错误信息反馈给用户
-                        val hint = if (errorMsg.contains("elderId") || errorMsg.contains("绑定")) {
-                            "请先在首页绑定老人设备"
-                        } else {
-                            errorMsg
+                        val hint = when {
+                            errorMsg.contains("elderId", ignoreCase = true) || errorMsg.contains("绑定", ignoreCase = true) -> "请先在首页绑定老人设备"
+                            errorMsg.contains("权限", ignoreCase = true) || errorMsg.contains("auth", ignoreCase = true) -> "无权限执行此操作"
+                            else -> errorMsg
                         }
                         Toast.makeText(this@MapActivity, "添加失败：$hint", Toast.LENGTH_LONG).show()
                     }
