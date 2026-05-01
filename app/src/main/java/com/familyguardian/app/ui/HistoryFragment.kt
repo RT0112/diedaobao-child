@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 class HistoryFragment : Fragment() {
     
     private var _binding: FragmentHistoryBinding? = null
-    private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
     private lateinit var adapter: FallEventAdapter
     
@@ -25,11 +24,13 @@ class HistoryFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentHistoryBinding.inflate(inflater, container, false)
-        return b.root
+        return _binding!!.root
     }
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        val b = _binding ?: return
         
         // 设置 RecyclerView
         adapter = FallEventAdapter()
@@ -53,12 +54,14 @@ class HistoryFragment : Fragment() {
         lifecycleScope.launch {
             val events = CloudBaseClient.getFallHistory(30)
             
-            if (events.isEmpty()) {
-                // 显示空状态（简单的 TextView 替代空视图）
-                adapter.submitList(emptyList())
-                Toast.makeText(requireContext(), "暂无跌倒记录", Toast.LENGTH_SHORT).show()
-            } else {
-                adapter.submitList(events)
+            _binding?.let { b ->
+                if (events.isEmpty()) {
+                    // 显示空状态（简单的 TextView 替代空视图）
+                    adapter.submitList(emptyList())
+                    Toast.makeText(requireContext(), "暂无跌倒记录", Toast.LENGTH_SHORT).show()
+                } else {
+                    adapter.submitList(events)
+                }
             }
         }
     }

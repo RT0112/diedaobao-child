@@ -8,9 +8,6 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.cloud.CloudBaseClient.GeofenceInfo
@@ -27,7 +24,6 @@ import kotlinx.coroutines.launch
 class GeofenceFragment : Fragment() {
     
     private var _binding: FragmentGeofenceBinding? = null
-    private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
     private lateinit var adapter: GeofenceAdapter
     private var fences = mutableListOf<GeofenceInfo>()
@@ -38,11 +34,13 @@ class GeofenceFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentGeofenceBinding.inflate(inflater, container, false)
-        return b.root
+        return _binding!!.root
     }
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        val b = _binding ?: return
         
         adapter = GeofenceAdapter(fences, 
             onClick = { fence -> openMapForView(fence) },

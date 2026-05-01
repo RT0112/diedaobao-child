@@ -15,7 +15,6 @@ import com.familyguardian.app.databinding.FragmentSettingsBinding
 class SettingsFragment : Fragment() {
     
     private var _binding: FragmentSettingsBinding? = null
-    private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -23,11 +22,13 @@ class SettingsFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentSettingsBinding.inflate(inflater, container, false)
-        return b.root
+        return _binding!!.root
     }
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        val b = _binding ?: return
         
         // 权限设置
         b.btnPermissionSettings.setOnClickListener { openPermissionSettings() }
@@ -47,6 +48,7 @@ class SettingsFragment : Fragment() {
     }
     
     private fun updateBindingStatus() {
+        val b = _binding ?: return
         val hasBound = CloudBaseClient.hasBoundElder()
         val context = context ?: return
         

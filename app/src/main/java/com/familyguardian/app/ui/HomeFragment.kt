@@ -18,7 +18,6 @@ import java.util.Locale
 class HomeFragment : Fragment() {
     
     private var _binding: FragmentHomeBinding? = null
-    private val b get() = _binding ?: throw IllegalStateException("View destroyed")
     
     private val elderName by lazy { CloudBaseClient.getElderName() }
     
@@ -28,11 +27,13 @@ class HomeFragment : Fragment() {
         savedInstanceState: Bundle?
     ): View {
         _binding = FragmentHomeBinding.inflate(inflater, container, false)
-        return b.root
+        return _binding!!.root
     }
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        
+        val b = _binding ?: return
         
         // 绑定按钮
         b.btnBind.setOnClickListener { onBindClick() }
@@ -65,6 +66,7 @@ class HomeFragment : Fragment() {
      * 更新UI状态（绑定/未绑定）
      */
     private fun updateUI() {
+        val b = _binding ?: return
         val hasBound = CloudBaseClient.hasBoundElder()
         
         if (hasBound) {
@@ -83,6 +85,7 @@ class HomeFragment : Fragment() {
      * 绑定按钮点击
      */
     private fun onBindClick() {
+        val b = _binding ?: return
         val code = b.etBindCode.text.toString().trim()
         if (code.isEmpty()) {
             Toast.makeText(requireContext(), "请输入绑定码", Toast.LENGTH_SHORT).show()
@@ -109,6 +112,7 @@ class HomeFragment : Fragment() {
     }
     
     private fun doBind(code: String) {
+        val b = _binding ?: return
         b.btnBind.isEnabled = false
         b.btnBind.text = "绑定中..."
         b.tvBindError.visibility = View.GONE
@@ -116,22 +120,26 @@ class HomeFragment : Fragment() {
         lifecycleScope.launch {
             val result = CloudBaseClient.bindElder(code)
             
-            b.btnBind.isEnabled = true
-            b.btnBind.text = "绑定"
-            
-            if (result.success) {
-                Toast.makeText(requireContext(), "绑定成功！", Toast.LENGTH_SHORT).show()
-                b.etBindCode.text?.clear()
-                updateUI()
-            } else {
-                showBindError(result.message)
+            _binding?.let { b ->
+                b.btnBind.isEnabled = true
+                b.btnBind.text = "绑定"
+                
+                if (result.success) {
+                    Toast.makeText(requireContext(), "绑定成功！", Toast.LENGTH_SHORT).show()
+                    b.etBindCode.text?.clear()
+                    updateUI()
+                } else {
+                    showBindError(result.message)
+                }
             }
         }
     }
     
     private fun showBindError(message: String) {
-        b.tvBindError.text = message
-        b.tvBindError.visibility = View.VISIBLE
+        _binding?.let { b ->
+            b.tvBindError.text = message
+            b.tvBindError.visibility = View.VISIBLE
+        }
     }
     
     private fun loadElderStatus() {
@@ -139,35 +147,33 @@ class HomeFragment : Fragment() {
         
         lifecycleScope.launch {
             val status = CloudBaseClient.getElderStatus()
-            if (status != null) {
-                b.tvElderName.text = status.name.ifEmpty { elderName }
-                
-                // 保存老人信息
-                CloudBaseClient.saveElderInfo(status.name, null)
-                
-                val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
-                b.tvStatus.text = statusText
-                b.tvStatus.setTextColor(
-                    ContextCompat.getColor(
-                        requireContext(),
-                        if (status.status == "fallen") android.R.color.holo_red_dark
-                        else android.R.color.holo_green_dark
+            _binding?.let { b ->
+                if (status != null) {
+                    b.tvElderName.text = status.name.ifEmpty { elderName }
+                    
+                    // 保存老人信息
+                    CloudBaseClient.saveElderInfo(status.name, null)
+                    
+                    val statusText = if (status.status == "fallen") "⚠️ 跌倒报警！" else "状态正常 ✅"
+                    b.tvStatus.text = statusText
+                    b.tvStatus.setTextColor(
+                        ContextCompat.getColor(
+                            requireContext(),
+                            if (status.status == "fallen") android.R.color.holo_red_dark
+                            else android.R.color.holo_green_dark
+                        )
                     )
-                )
-                
-                val timeStr = formatTime(status.lastUpdate)
-                b.tvLastUpdate.text = "最后更新：$timeStr"
-                
-                // 位置状态
-                if (status.lastLocation != null) {
+                    
+                    val timeStr = formatTime(status.lastUpdate)
+                    b.tvLastUpdate.text = "最后更新：$timeStr"
+                    
+                    // 位置状态
                     b.btnViewLocation.text = "📍 查看位置"
                 } else {
-                    b.btnViewLocation.text = "📍 查看位置"
+                    b.tvElderName.text = elderName
+                    b.tvStatus.text = "获取状态失败"
+                    b.tvStatus.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
                 }
-            } else {
-                b.tvElderName.text = elderName
-                b.tvStatus.text = "获取状态失败"
-                b.tvStatus.setTextColor(ContextCompat.getColor(requireContext(), android.R.color.darker_gray))
             }
         }
     }
