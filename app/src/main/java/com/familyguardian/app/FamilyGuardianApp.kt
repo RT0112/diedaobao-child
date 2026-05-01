@@ -13,19 +13,34 @@ class FamilyGuardianApp : Application() {
     companion object {
         lateinit var instance: FamilyGuardianApp
             private set
+        // 崩溃日志文件路径
+        val crashLogFile get() = "${instance.getExternalFilesDir(null)?.absolutePath}/crash_log.txt"
     }
     
     override fun onCreate() {
         super.onCreate()
         instance = this
         
-        // 全局异常处理（捕获并打印到 Logcat）
+        // 全局异常处理（捕获并保存日志到文件）
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             val sw = StringWriter()
             throwable.printStackTrace(PrintWriter(sw))
             val stack = sw.toString()
+            
+            // 1. 写 LogCat
             Log.e("CRASH", stack)
+            
+            // 2. 写崩溃日志文件（SD卡）
+            try {
+                val logPath = crashLogFile
+                val time = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                val logEntry = "\n========== CRASH $time ==========\nThread: ${thread.name}\n$stack\n"
+                java.io.FileWriter(logPath, true).use { fw -> fw.append(logEntry) }
+                Log.i("CRASH", "Saved to: $logPath")
+            } catch (e: Exception) {
+                Log.e("CRASH", "Failed to write crash log: ${e.message}")
+            }
             
             // Toast 显示简要错误（API 33+ 发通知）
             val msg = throwable::class.java.simpleName + ": " + (throwable.message?.take(80) ?: "")

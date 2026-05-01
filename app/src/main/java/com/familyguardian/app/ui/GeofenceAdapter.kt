@@ -42,12 +42,9 @@ class GeofenceAdapter(
         holder.tvDetail.text = String.format("%.4f, %.4f", fence.latitude, fence.longitude)
         holder.tvDetail.textSize = 14f
         
-        // 越界标红
-        if (fence.isBreached) {
-            holder.tvName.setTextColor(0xFFF44336.toInt())
-        } else {
-            holder.tvName.setTextColor(0xFF333333.toInt())
-        }
+        // 越界标红（用 ?android:attr/textColorPrimary 等价，安全）
+        val textColor = if (fence.isBreached) 0xFFB71C1C.toInt() else 0xFF333333.toInt()
+        holder.tvName.setTextColor(textColor)
         
         // 点击 → 查看地图
         holder.itemView.setOnClickListener { onClick(fence) }
