@@ -1,6 +1,7 @@
 package com.familyguardian.app.ui
 
 import android.os.Bundle
+import android.view.View
 import android.webkit.GeolocationPermissions
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -13,6 +14,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -26,7 +28,13 @@ import kotlinx.coroutines.launch
 class MapActivity : AppCompatActivity() {
     private val TAG = "MapActivity"
     private lateinit var webView: WebView
+    private lateinit var rootLayout: LinearLayout
     private var currentMode = "view"
+    
+    // 添加模式的当前状态
+    private var addFenceLat = 0.0
+    private var addFenceLng = 0.0
+    private var addFenceRadius = 200
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +70,65 @@ class MapActivity : AppCompatActivity() {
         }
         
         setContentView(webView)
+        
+        // 为添加模式创建原生保存面板（替代 WebView 内的 JS 按钮）
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = android.view.ViewGroup.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        
+        // WebView 占满剩余空间
+        webView.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        )
+        
+        // 原生保存面板（添加模式时显示）
+        val savePanel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xFFFFFFFF.toInt())
+            setPadding(16, 12, 16, 24)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            visibility = View.GONE
+            tag = "save_panel"
+            
+            // 围栏名称输入
+            addView(EditText(this@MapActivity).apply {
+                hint = "围栏名称"
+                textSize = 16f
+                tag = "fence_name"
+                setSingleLine()
+                setPadding(12, 10, 12, 10)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            })
+            
+            // 保存按钮
+            addView(android.widget.Button(this@MapActivity).apply {
+                text = "💾 保存"
+                textSize = 16f
+                tag = "save_btn"
+                setBackgroundColor(0xFF1976D2.toInt())
+                setTextColor(0xFFFFFFFF.toInt())
+                setPadding(24, 10, 24, 10)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { leftMargin = 12 }
+                setOnClickListener { onNativeSaveClick() }
+            })
+        }
+        
+        rootLayout.addView(webView)
+        rootLayout.addView(savePanel)
+        
+        setContentView(rootLayout)
         
         when (currentMode) {
             "add" -> supportActionBar?.title = "➕ 添加围栏"
@@ -570,8 +637,87 @@ window.AndroidBridge = {
                     "document.getElementById('fence-name').value = '${escapeJs(defaultName)}';",
                     null
                 )
+                
+                // ★ 显示原生保存面板
+                showAddModePanel()
+                
+                // 定时同步 JS 中的坐标到 Kotlin 变量（每500ms）
+                scheduleJsSync()
+                
             } catch (e: Exception) {
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    /**
+     * 显示添加模式的原生保存面板
+     */
+    private fun showAddModePanel() {
+        val panel = rootLayout.findViewWithTag<View>("save_panel")
+        if (panel != null) panel.visibility = View.VISIBLE
+    }
+    
+    /**
+     * 定时从 JS 同步坐标到 Kotlin（用于原生保存按钮）
+     */
+    private fun scheduleJsSync() {
+        lifecycleScope.launch {
+            while (true) {
+                delay(500)
+                // 读取 JS 中的 currentCenter 和 currentRadius
+                webView.evaluateJavascript(
+                    """
+                    if (window.AndroidBridge && typeof currentCenter !== 'undefined' && currentCenter) {
+                        window.AndroidBridge.syncFenceValues(
+                            currentCenter.lat,
+                            currentCenter.lng,
+                            currentRadius
+                        );
+                    }
+                    """.trimIndent(),
+                    null
+                )
+            }
+        }
+    }
+    
+    /**
+     * 原生保存按钮点击
+     */
+    private fun onNativeSaveClick() {
+        val nameInput = rootLayout.findViewWithTag<EditText>("fence_name")
+        val fenceName = nameInput?.text?.toString()?.trim()?.ifEmpty { "围栏" } ?: "围栏"
+        
+        val lat = addFenceLat
+        val lng = addFenceLng
+        val radius = addFenceRadius
+        
+        if (lat == 0.0 && lng == 0.0) {
+            Toast.makeText(this, "请先在地图上选择围栏位置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            Toast.makeText(this, "坐标无效，请在地图上选择位置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        Toast.makeText(this, "正在保存...", Toast.LENGTH_SHORT).show()
+        
+        lifecycleScope.launch {
+            val errorMsg = CloudBaseClient.addGeofence(fenceName, lat, lng, radius.coerceIn(50, 2000))
+            if (errorMsg.isEmpty()) {
+                Toast.makeText(this@MapActivity, "围栏「$fenceName」已添加 ✅", Toast.LENGTH_SHORT).show()
+                finish()
+            } else {
+                val hint = when {
+                    errorMsg.contains("elderId", ignoreCase = true) || errorMsg.contains("绑定", ignoreCase = true) -> "请先在首页绑定老人设备"
+                    errorMsg.contains("权限", ignoreCase = true) || errorMsg.contains("auth", ignoreCase = true) -> "无权限执行此操作"
+                    errorMsg.contains("creatorId", ignoreCase = true) -> "请重新登录后重试"
+                    else -> errorMsg
+                }
+                Toast.makeText(this@MapActivity, "添加失败：$hint", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -613,6 +759,14 @@ window.AndroidBridge = {
     // === JS 回调：保存围栏 ===
     inner class FenceSaveCallback {
         private var lastCallMs = 0L
+        
+        // JS 同步来的坐标值（由 scheduleJsSync 调用）
+        @android.webkit.JavascriptInterface
+        fun syncFenceValues(lat: Double, lng: Double, radius: Int) {
+            addFenceLat = lat
+            addFenceLng = lng
+            addFenceRadius = radius
+        }
         
         @android.webkit.JavascriptInterface
         fun onSaveFence(name: String, lat: Double, lng: Double, radius: Int) {
