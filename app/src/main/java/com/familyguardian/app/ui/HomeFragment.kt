@@ -10,8 +10,6 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.databinding.FragmentHomeBinding
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -20,13 +18,8 @@ import java.util.Locale
 class HomeFragment : Fragment() {
     
     private var _binding: FragmentHomeBinding? = null
-    private var pollingJob: Job? = null  // 状态轮询
     
     private val elderName by lazy { CloudBaseClient.getElderName() }
-
-    companion object {
-        private const val POLLING_INTERVAL = 30_000L  // 30秒轮询一次老人状态
-    }
     
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -47,6 +40,11 @@ class HomeFragment : Fragment() {
         
         // 查看位置按钮 → 打开地图Activity
         b.btnViewLocation.setOnClickListener { onViewLocation() }
+        
+        // 下拉刷新
+        b.swipeRefresh.setOnRefreshListener {
+            loadElderStatus()
+        }
         
         // 首次启动自动注册
         ensureRegistered()
@@ -162,6 +160,9 @@ class HomeFragment : Fragment() {
             val status = CloudBaseClient.getElderStatus()
             if (!isAdded) return@launch
             
+            // 关闭下拉刷新动画
+            _binding?.swipeRefresh?.isRefreshing = false
+            
             _binding?.let { b ->
                 if (status != null) {
                     b.tvElderName.text = status.name.ifEmpty { elderName }
@@ -225,43 +226,12 @@ class HomeFragment : Fragment() {
     
     override fun onResume() {
         super.onResume()
-        // 每次回到页面刷新状态
+        // 每次回到页面刷新状态（按需，不轮询）
         updateUI()
-        // 启动轮询（仅已绑定时）
-        startPolling()
     }
-    
-    override fun onPause() {
-        super.onPause()
-        // 离开页面时停止轮询
-        stopPolling()
-    }
-    
+
     override fun onDestroyView() {
         super.onDestroyView()
-        stopPolling()
         _binding = null
-    }
-    
-    /**
-     * 启动状态轮询：每30秒刷新一次老人状态
-     * 让子女端能看到近实时的位置和状态变化
-     */
-    private fun startPolling() {
-        if (!CloudBaseClient.hasBoundElder()) return
-        stopPolling()
-        pollingJob = viewLifecycleOwner.lifecycleScope.launch {
-            while (isAdded && _binding != null) {
-                delay(POLLING_INTERVAL)
-                if (isAdded && _binding != null && CloudBaseClient.hasBoundElder()) {
-                    loadElderStatus()
-                }
-            }
-        }
-    }
-    
-    private fun stopPolling() {
-        pollingJob?.cancel()
-        pollingJob = null
     }
 }
