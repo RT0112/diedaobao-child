@@ -8,6 +8,9 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.cloud.CloudBaseClient.GeofenceInfo
@@ -61,32 +64,36 @@ class GeofenceFragment : Fragment() {
     
     private fun loadFences() {
         if (!CloudBaseClient.hasBoundElder()) {
-            b.layoutEmpty.visibility = View.VISIBLE
-            b.recyclerFences.visibility = View.GONE
-            b.tvEmptyHint.text = "请先绑定老人设备"
-            b.swipeRefresh.isRefreshing = false
+            _binding?.let { b ->
+                b.layoutEmpty.visibility = View.VISIBLE
+                b.recyclerFences.visibility = View.GONE
+                b.tvEmptyHint.text = "请先绑定老人设备"
+                b.swipeRefresh.isRefreshing = false
+            }
             return
         }
         
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 fences.clear()
                 val loaded = CloudBaseClient.getGeofences()
                 fences.addAll(loaded)
                 adapter.notifyDataSetChanged()
                 
-                b.swipeRefresh.isRefreshing = false
-                
-                if (fences.isEmpty()) {
-                    b.layoutEmpty.visibility = View.VISIBLE
-                    b.recyclerFences.visibility = View.GONE
-                    b.tvEmptyHint.text = "暂无电子围栏\n点击下方按钮添加"
-                } else {
-                    b.layoutEmpty.visibility = View.GONE
-                    b.recyclerFences.visibility = View.VISIBLE
+                _binding?.let { b ->
+                    b.swipeRefresh.isRefreshing = false
+                    
+                    if (fences.isEmpty()) {
+                        b.layoutEmpty.visibility = View.VISIBLE
+                        b.recyclerFences.visibility = View.GONE
+                        b.tvEmptyHint.text = "暂无电子围栏\n点击下方按钮添加"
+                    } else {
+                        b.layoutEmpty.visibility = View.GONE
+                        b.recyclerFences.visibility = View.VISIBLE
+                    }
                 }
             } catch (e: Exception) {
-                b.swipeRefresh.isRefreshing = false
+                _binding?.swipeRefresh?.isRefreshing = false
                 Toast.makeText(requireContext(), "加载围栏失败：${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
@@ -147,7 +154,7 @@ class GeofenceFragment : Fragment() {
     }
     
     private fun deleteFence(fence: GeofenceInfo) {
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val success = CloudBaseClient.deleteGeofence(fence.id)
                 if (success) {
