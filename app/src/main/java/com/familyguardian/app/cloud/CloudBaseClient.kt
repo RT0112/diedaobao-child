@@ -180,7 +180,17 @@ object CloudBaseClient {
                 if (!response.isSuccessful) return@withContext null
                 
                 val responseBody = response.body?.string()
-                gson.fromJson(responseBody, ElderStatus::class.java)
+                Log.i(TAG, "getElderStatus response: $responseBody")
+                
+                // 先检查code字段
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val code = json.get("code")?.asInt ?: 0
+                if (code != 200) {
+                    Log.w(TAG, "getElderStatus error code=$code: ${json.get("message")?.asString}")
+                    return@withContext null
+                }
+                
+                gson.fromJson(json, ElderStatus::class.java)
             } catch (e: Exception) {
                 Log.e(TAG, "getElderStatus error", e)
                 null
