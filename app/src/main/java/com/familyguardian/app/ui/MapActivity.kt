@@ -95,7 +95,7 @@ class MapActivity : AppCompatActivity() {
     }
 
     // ========================================
-    // 地图 HTML（Leaflet + 高德瓦片）
+    // 地图 HTML（Leaflet + 高德瓦片，GCJ-02坐标系，JS层WGS84↔GCJ02转换）
     // ========================================
     private fun loadMapHtml() {
         val html = """
@@ -146,6 +146,14 @@ var map=null,elderMarker=null,fCircles=[],fData=[];
 var editCircle=null,ctrMarker=null,edgeMarker=null;
 var ctr=null,cRad=200;
 
+// ======== WGS-84 <-> GCJ-02 ========
+var PI=Math.PI,a=6378245.0,ee=0.00669342162296594323;
+function _tLat(x,y){var r=-100+2*x+3*y+.2*y*y+.1*x*y+.2*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(y*PI)+40*Math.sin(y/3*PI))*2/3;r+=(160*Math.sin(y/12*PI)+320*Math.sin(y*PI/30))*2/3;return r}
+function _tLng(x,y){var r=300+x+2*y+.1*x*x+.1*x*y+.1*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*PI)+20*Math.sin(2*x*PI))*2/3;r+=(20*Math.sin(x*PI)+40*Math.sin(x/3*PI))*2/3;r+=(150*Math.sin(x/12*PI)+300*Math.sin(x/30*PI))*2/3;return r}
+function outOfChina(lat,lng){return lng<72.004||lng>137.8347||lat<.8293||lat>55.8271}
+function wgs2gcj(lat,lng){if(outOfChina(lat,lng))return[lat,lng];var dLat=_tLat(lng-105,lat-35),dLng=_tLng(lng-105,lat-35),rad=lat/180*PI,m=Math.sin(rad);m=1-ee*m*m;var s=Math.sqrt(m);dLat=dLat*180/((a*(1-ee))/(m*s)*PI);dLng=dLng*180/(a/s*Math.cos(rad)*PI);return[lat+dLat,lng+dLng]}
+function gcj2wgs(lat,lng){if(outOfChina(lat,lng))return[lat,lng];var wLat=lat,wLng=lng;for(var i=0;i<5;i++){var g=wgs2gcj(wLat,wLng);wLat+=lat-g[0];wLng+=lng-g[1]}return[wLat,wLng]}
+
 function initMap(lat,lng){
   if(map)return;
   map=L.map('container').setView([lat,lng],15);
@@ -158,18 +166,20 @@ function je(s){return s.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,
 function setElderLocation(lat,lng,name,time){
   if(!map)initMap(lat,lng);
   if(elderMarker)map.removeLayer(elderMarker);
-  elderMarker=L.circleMarker([lat,lng],{radius:8,color:'#F44336',fillColor:'#F44336',fillOpacity:1}).addTo(map);
-  map.setView([lat,lng],16);
+  var gcj=wgs2gcj(lat,lng);
+  elderMarker=L.circleMarker([gcj[0],gcj[1]],{radius:8,color:'#F44336',fillColor:'#F44336',fillOpacity:1}).addTo(map);
+  map.setView([gcj[0],gcj[1]],16);
   document.getElementById('info-panel').style.display='block';
   document.getElementById('title').textContent=(name||'老人')+' 的位置';
   document.getElementById('time').textContent='定位时间：'+(time||'未知');
-  document.getElementById('coord').textContent='坐标：'+lat.toFixed(6)+', '+lng.toFixed(6);
+  document.getElementById('coord').textContent='坐标：'+gcj[0].toFixed(6)+', '+gcj[1].toFixed(6);
 }
 
 function addFence(id,name,lat,lng,radius,isBreached){
   if(!map)initMap(lat,lng);
+  var gcj=wgs2gcj(lat,lng);
   var c=isBreached?'#F44336':'#4CAF50';
-  var circle=L.circle([lat,lng],{radius:radius,color:c,fillColor:c,fillOpacity:.1}).addTo(map);
+  var circle=L.circle([gcj[0],gcj[1]],{radius:radius,color:c,fillColor:c,fillOpacity:.1}).addTo(map);
   circle.bindPopup(name+' ('+radius+'米)'+(isBreached?' ⚠️已越界':''));
   fCircles.push(circle);
   fData.push({id:id,name:name,radius:radius,isBreached:isBreached});
@@ -203,7 +213,8 @@ function setupEditableFence(lat,lng,radius){
   if(editCircle)map.removeLayer(editCircle);
   if(ctrMarker)map.removeLayer(ctrMarker);
   if(edgeMarker)map.removeLayer(edgeMarker);
-  ctr=L.latLng(lat,lng);cRad=radius||200;
+  var gcj=wgs2gcj(lat,lng);
+  ctr=L.latLng(gcj[0],gcj[1]);cRad=radius||200;
   editCircle=L.circle(ctr,{radius:cRad,color:'#1976D2',fillColor:'#1976D2',fillOpacity:.08}).addTo(map);
   ctrMarker=L.marker(ctr,{
     icon:L.divIcon({html:'<div style="width:20px;height:20px;background:#1976D2;border:3px solid white;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.3)"></div>',iconSize:[20,20],iconAnchor:[10,10]}),
@@ -230,19 +241,21 @@ function saveFence(){
   if(!ctr)return;
   var n=document.getElementById('fence-name').value.trim()||'围栏';
   var r=parseInt(document.getElementById('fence-radius').value)||200;
-  if(window.Android)window.Android.onSaveFence(n,ctr.lat,ctr.lng,r);
+  var wgs=gcj2wgs(ctr.lat,ctr.lng);
+  if(window.Android)window.Android.onSaveFence(n,wgs[0],wgs[1],r);
   else alert('保存失败：请重试');
 }
 
 function showSingleFence(name,lat,lng,radius,isBreached){
   if(!map)initMap(lat,lng);
+  var gcj=wgs2gcj(lat,lng);
   var c=isBreached?'#F44336':'#4CAF50';
-  L.circle([lat,lng],{radius:radius,color:c,fillColor:c,fillOpacity:.12}).addTo(map);
-  L.circleMarker([lat,lng],{radius:6,color:c,fillColor:c,fillOpacity:1}).addTo(map);
-  map.setView([lat,lng],15);
+  L.circle([gcj[0],gcj[1]],{radius:radius,color:c,fillColor:c,fillOpacity:.12}).addTo(map);
+  L.circleMarker([gcj[0],gcj[1]],{radius:6,color:c,fillColor:c,fillOpacity:1}).addTo(map);
+  map.setView([gcj[0],gcj[1]],15);
   document.getElementById('info-panel').style.display='block';
   document.getElementById('title').textContent='📌 '+name;
-  document.getElementById('coord').textContent='坐标：'+lat.toFixed(6)+', '+lng.toFixed(6)+' | 半径：'+radius+'米';
+  document.getElementById('coord').textContent='坐标：'+gcj[0].toFixed(6)+', '+gcj[1].toFixed(6)+' | 半径：'+radius+'米';
   document.getElementById('time').textContent='';
 }
 </script>
@@ -359,14 +372,14 @@ function showSingleFence(name,lat,lng,radius,isBreached){
 
         evalJs("showSingleFence('${esc(name)}',$lat,$lng,$radius,false)")
 
-        // 叠加载老人位置
+        // 叠加载老人位置（WGS84→GCJ02转换后显示）
         lifecycleScope.launch {
             try {
                 val status = CloudBaseClient.getElderStatus()
                 if (status != null && status.lastLocation != null) {
                     val loc = status.lastLocation
                     evalJs(
-                        "if(map){L.circleMarker([${loc.latitude},${loc.longitude}]," +
+                        "if(map){var g=wgs2gcj(${loc.latitude},${loc.longitude});L.circleMarker([g[0],g[1]]," +
                         "{radius:8,color:'#F44336',fillColor:'#F44336',fillOpacity:1})" +
                         ".addTo(map).bindPopup('${esc(status.name)}').openPopup();}"
                     )
