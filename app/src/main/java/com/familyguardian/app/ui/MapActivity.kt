@@ -97,6 +97,7 @@ class MapActivity : AppCompatActivity() {
                     // 页面加载完成后，根据模式加载数据
                     when (currentMode) {
                         "add" -> setupAddMode()
+                        "edit" -> setupEditMode()
                         "view_fence" -> setupViewFenceMode()
                         else -> loadElderData()
                     }
@@ -111,6 +112,7 @@ class MapActivity : AppCompatActivity() {
         supportActionBar?.run {
             title = when (currentMode) {
                 "add" -> "➕ 添加围栏"
+                "edit" -> "✏️ 编辑围栏"
                 "view_fence" -> intent.getStringExtra("fenceName") ?: "围栏详情"
                 else -> "📍 老人位置"
             }
@@ -449,6 +451,22 @@ function showSingleFence(name,lat,lng,radius,isBreached){
         }
     }
 
+    // ========================================
+    // 编辑模式：加载已有围栏直接进入编辑
+    // ========================================
+    private fun setupEditMode() {
+        val fenceId = intent.getStringExtra("fenceId") ?: ""
+        val name = intent.getStringExtra("fenceName") ?: "围栏"
+        val lat = intent.getDoubleExtra("fenceLat", 39.9042)
+        val lng = intent.getDoubleExtra("fenceLng", 116.4074)
+        val radius = intent.getIntExtra("fenceRadius", 200)
+        
+        evalJs("editingFenceId='${esc(fenceId)}';document.getElementById('add-panel-title').textContent='✏️ 编辑围栏'")
+        evalJs("setupEditableFence($lat,$lng,$radius)")
+        evalJs("document.getElementById('fence-name').value='${esc(name)}'")
+        evalJs("document.getElementById('fence-radius').value=$radius")
+    }
+    
     // ========================================
     // 工具函数
     // ========================================

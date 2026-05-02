@@ -141,17 +141,34 @@ class GeofenceFragment : Fragment() {
      */
     private fun showFenceOptions(fence: GeofenceInfo) {
         if (!isAdded) return
-        val options = arrayOf("📍 在地图上查看", "🗑️ 删除围栏")
+        val options = arrayOf("✏️ 编辑围栏", "📍 在地图上查看", "🗑️ 删除围栏")
         android.app.AlertDialog.Builder(requireContext())
             .setTitle(fence.name)
             .setItems(options) { _, which ->
                 if (!isAdded) return@setItems
                 when (which) {
-                    0 -> openMapForView(fence)
-                    1 -> confirmDelete(fence)
+                    0 -> openMapForEdit(fence)
+                    1 -> openMapForView(fence)
+                    2 -> confirmDelete(fence)
                 }
             }
             .show()
+    }
+    
+    /**
+     * 打开地图页 — 编辑围栏模式
+     */
+    private fun openMapForEdit(fence: GeofenceInfo) {
+        if (!isAdded) return
+        val intent = Intent(requireContext(), MapActivity::class.java).apply {
+            putExtra("mode", "edit")
+            putExtra("fenceId", fence.id)
+            putExtra("fenceName", fence.name)
+            putExtra("fenceLat", fence.latitude)
+            putExtra("fenceLng", fence.longitude)
+            putExtra("fenceRadius", fence.radius)
+        }
+        startActivity(intent)
     }
     
     private fun confirmDelete(fence: GeofenceInfo) {
