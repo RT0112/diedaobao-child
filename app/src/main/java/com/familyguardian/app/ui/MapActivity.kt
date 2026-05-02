@@ -291,21 +291,27 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     return@launch
                 }
 
-                // 3. 轮询等待新位置（最多15秒）
+                // 3. 轮询等待老人上传新位置（最多30秒）
+                // 老人端：每3秒轮询(最多3s延迟) + GPS单次定位(最多15s) = 最坏18s
+                // 留足余量：30s
                 val startWait = System.currentTimeMillis()
-                while (System.currentTimeMillis() - startWait < 15_000) {
+                while (System.currentTimeMillis() - startWait < 30_000) {
                     kotlinx.coroutines.delay(1500)
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
                         val loc = fresh.lastLocation
-                        if (loc.timestamp > requestTime) {
+                        // 双重检测：时间戳新于请求 或 pullLocationStatus变为done
+                        if (loc.timestamp > requestTime || fresh.pullLocationStatus == "done") {
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
                             return@launch
                         }
+                        if (fresh.pullLocationStatus == "pending") {
+                            evalJs("document.getElementById('time')?.textContent='等待老人设备响应...'")
+                        }
                     }
                 }
-                Log.w(TAG, "位置拉取超时(>15s)，显示最近位置")
+                Log.w(TAG, "位置拉取超时(>30s)，显示最近位置")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_SHORT).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
                 // 超时：保留步骤1的缓存位置

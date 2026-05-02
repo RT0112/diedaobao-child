@@ -437,7 +437,9 @@ object CloudBaseClient {
         val name: String,
         val lastLocation: Location?,
         val lastUpdate: Long,
-        val status: String
+        val status: String,
+        val pullLocationStatus: String? = null,  // "pending" | "done" | "idle"
+        val pullRequestTime: Long? = null         // 上次拉取请求时间戳
     )
     
     data class Location(
