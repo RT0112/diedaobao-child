@@ -279,8 +279,12 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                 }
 
                 // 2. 请求老人实时位置
+                runOnUiThread { Toast.makeText(this@MapActivity, "📡 正在获取实时位置...", Toast.LENGTH_SHORT).show() }
+                evalJs("document.getElementById('time')?.textContent='正在获取实时位置...'")
+
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {
+                    runOnUiThread { Toast.makeText(this@MapActivity, "❌ 无法连接到老人设备", Toast.LENGTH_SHORT).show() }
                     if (!hasData) {
                         evalJs("document.getElementById('loading')?.textContent='无法请求位置';document.getElementById('loading')?.style.display='block'")
                     }
@@ -296,12 +300,15 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                         val loc = fresh.lastLocation
                         if (loc.timestamp > requestTime) {
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
+                            runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
                             return@launch
                         }
                     }
                 }
                 Log.w(TAG, "位置拉取超时(>15s)，显示最近位置")
-                // 超时：保留步骤1的缓存位置，不反复弹Toast
+                runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_SHORT).show() }
+                evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
+                // 超时：保留步骤1的缓存位置
             } catch (e: Exception) {
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
             }
