@@ -167,6 +167,48 @@ object CloudBaseClient {
         prefs.edit().remove(KEY_ELDER_ID).apply()
     }
     
+    // ========== 按需位置拉取 ==========
+    
+    /**
+     * 请求老人实时位置
+     * 调用云函数在老人用户文档上设置 pull flag
+     * 老人端每10秒轮询 poll_pull，发现请求后立即上传最新GPS
+     */
+    suspend fun requestElderLocation(): Long? {
+        return withContext(Dispatchers.IO) {
+            try {
+                val eid = elderId ?: return@withContext null
+                val body = JsonObject().apply {
+                    addProperty("elderId", eid)
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/request-elder-location")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "requestElderLocation failed: ${response.code}")
+                    return@withContext null
+                }
+                
+                val responseBody = response.body?.string()
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val success = json.get("success")?.asBoolean ?: false
+                if (!success) {
+                    Log.w(TAG, "requestElderLocation: ${json.get("message")?.asString}")
+                    return@withContext null
+                }
+                
+                json.get("requestTime")?.asLong
+            } catch (e: Exception) {
+                Log.e(TAG, "requestElderLocation error", e)
+                null
+            }
+        }
+    }
+    
     // ========== 老人状态 ==========
     
     suspend fun getElderStatus(): ElderStatus? {

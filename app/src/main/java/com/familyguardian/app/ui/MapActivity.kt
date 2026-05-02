@@ -1,6 +1,7 @@
 package com.familyguardian.app.ui
 
 import android.os.Bundle
+import android.util.Log
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -16,6 +17,10 @@ import kotlinx.coroutines.launch
  * - view_fence: 查看单个围栏详情
  */
 class MapActivity : AppCompatActivity() {
+
+    companion object {
+        private const val TAG = "MapActivity"
+    }
 
     private lateinit var webView: WebView
     private var currentMode = "view"
@@ -256,12 +261,13 @@ function showSingleFence(name,lat,lng,radius,isBreached){
         }
         lifecycleScope.launch {
             try {
+                // 1. 先展示缓存位置
                 val status = CloudBaseClient.getElderStatus()
+                var hasData = false
                 if (status != null && status.lastLocation != null) {
                     val loc = status.lastLocation
                     evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(status.name)}','${esc(formatTime(loc.timestamp))}')")
-                } else {
-                    evalJs("document.getElementById('loading').textContent='暂无位置数据';document.getElementById('loading').style.display='block'")
+                    hasData = true
                 }
                 // 加载围栏
                 val fences = CloudBaseClient.getGeofences()
@@ -271,6 +277,31 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                         evalJs("addFence('${esc(f.id)}','${esc(f.name)}',${f.latitude},${f.longitude},${f.radius},${f.isBreached})")
                     }
                 }
+
+                // 2. 请求老人实时位置
+                val requestTime = CloudBaseClient.requestElderLocation()
+                if (requestTime == null) {
+                    if (!hasData) {
+                        evalJs("document.getElementById('loading')?.textContent='无法请求位置';document.getElementById('loading')?.style.display='block'")
+                    }
+                    return@launch
+                }
+
+                // 3. 轮询等待新位置（最多15秒）
+                val startWait = System.currentTimeMillis()
+                while (System.currentTimeMillis() - startWait < 15_000) {
+                    kotlinx.coroutines.delay(1500)
+                    val fresh = CloudBaseClient.getElderStatus()
+                    if (fresh != null && fresh.lastLocation != null) {
+                        val loc = fresh.lastLocation
+                        if (loc.timestamp > requestTime) {
+                            evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
+                            return@launch
+                        }
+                    }
+                }
+                Log.w(TAG, "位置拉取超时(>15s)，显示最近位置")
+                // 超时：保留步骤1的缓存位置，不反复弹Toast
             } catch (e: Exception) {
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
             }
