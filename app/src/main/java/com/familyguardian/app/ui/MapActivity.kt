@@ -52,6 +52,29 @@ class MapActivity : AppCompatActivity() {
                 }
             }
         }
+
+        @android.webkit.JavascriptInterface
+        fun onUpdateFence(fenceId: String, name: String, lat: Double, lng: Double, radius: Int) {
+            runOnUiThread {
+                val fenceName = name.trim().ifEmpty { "围栏" }
+                val r = radius.coerceIn(50, 2000)
+
+                if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                    Toast.makeText(this@MapActivity, "坐标无效", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                Toast.makeText(this@MapActivity, "正在更新...", Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch {
+                    val err = CloudBaseClient.updateGeofence(fenceId, fenceName, lat, lng, r)
+                    if (err.isEmpty()) {
+                        Toast.makeText(this@MapActivity, "围栏「$fenceName」已更新 ✅", Toast.LENGTH_SHORT).show()
+                        finish()
+                    } else {
+                        Toast.makeText(this@MapActivity, "更新失败：$err", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -181,6 +204,7 @@ function addFence(id,name,lat,lng,radius,isBreached){
   var c=isBreached?'#F44336':'#4CAF50';
   var circle=L.circle([gcj[0],gcj[1]],{radius:radius,color:c,fillColor:c,fillOpacity:.1}).addTo(map);
   circle.bindPopup(name+' ('+radius+'米)'+(isBreached?' ⚠️已越界':''));
+  circle.on('click',function(){editFence(id,name,lat,lng,radius)});
   fCircles.push(circle);
   fData.push({id:id,name:name,radius:radius,isBreached:isBreached});
   updateInfo();
@@ -291,9 +315,9 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     }
                 }
 
-                // 2. 请求老人实时位置
+                // 2. 请求老人实时位置（显示持久转圈，直到成功/失败）
                 runOnUiThread { Toast.makeText(this@MapActivity, "📡 正在获取实时位置...", Toast.LENGTH_SHORT).show() }
-                evalJs("document.getElementById('time')?.textContent='正在获取实时位置...'")
+                evalJs("showLoading('📡 正在获取实时位置...')")
 
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {
@@ -315,6 +339,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                         val loc = fresh.lastLocation
                         // 双重检测：时间戳新于请求 或 pullLocationStatus变为done
                         if (loc.timestamp > requestTime || fresh.pullLocationStatus == "done") {
+                            evalJs("hideLoading()")
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
                             return@launch
@@ -325,6 +350,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     }
                 }
                 Log.w(TAG, "位置拉取超时(>30s)，显示最近位置")
+                evalJs("hideLoading()")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_SHORT).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
                 // 超时：保留步骤1的缓存位置
@@ -353,6 +379,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                 }
                 val fences = CloudBaseClient.getGeofences()
                 val dn = "围栏${fences.size + 1}"
+                evalJs("editingFenceId=null;document.getElementById('add-panel-title').textContent='📍 添加电子围栏'")
                 evalJs("setupEditableFence($lat,$lng,200)")
                 evalJs("document.getElementById('fence-name').value='${esc(dn)}'")
             } catch (e: Exception) {

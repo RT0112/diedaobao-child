@@ -380,6 +380,50 @@ object CloudBaseClient {
     }
     
     /**
+     * 更新围栏
+     */
+    suspend fun updateGeofence(fenceId: String, name: String, latitude: Double, longitude: Double, radius: Int): String {
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = JsonObject().apply {
+                    addProperty("action", "update")
+                    addProperty("fenceId", fenceId)
+                    addProperty("creatorId", userId ?: "")
+                    addProperty("name", name)
+                    addProperty("latitude", latitude)
+                    addProperty("longitude", longitude)
+                    addProperty("radius", radius)
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/geofence")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+                Log.i(TAG, "updateGeofence response: $responseBody")
+                
+                if (!response.isSuccessful) {
+                    return@withContext "网络错误(${response.code})"
+                }
+                
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val success = json.get("success")?.asBoolean ?: false
+                if (!success) {
+                    val msg = json.get("message")?.asString ?: "更新失败"
+                    return@withContext msg
+                }
+                
+                ""
+            } catch (e: Exception) {
+                Log.e(TAG, "updateGeofence error", e)
+                "网络异常：${e.message}"
+            }
+        }
+    }
+    
+    /**
      * 删除围栏
      */
     suspend fun deleteGeofence(fenceId: String): Boolean {
