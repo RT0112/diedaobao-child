@@ -432,6 +432,7 @@ object CloudBaseClient {
                 val body = JsonObject().apply {
                     addProperty("action", "delete")
                     addProperty("fenceId", fenceId)
+                    addProperty("creatorId", userId ?: "") // 云函数权限检查需要
                 }
                 
                 val request = Request.Builder()
