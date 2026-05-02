@@ -89,6 +89,10 @@ class MapActivity : AppCompatActivity() {
             addJavascriptInterface(JsBridge(), "Android")
 
             webViewClient = object : WebViewClient() {
+                override fun onReceivedError(view: WebView?, code: Int, desc: String?, url: String?) {
+                    Log.e(TAG, "WebView错误: code=$code, desc=$desc")
+                    webView.loadDataWithBaseURL("about:blank", "<h2 style='padding:40px;text-align:center;color:#666'>地图加载失败<br><small>请检查网络连接</small></h2>", "text/html", "UTF-8", null)
+                }
                 override fun onPageFinished(view: WebView?, url: String?) {
                     // 页面加载完成后，根据模式加载数据
                     when (currentMode) {
@@ -153,12 +157,12 @@ html,body,#container{width:100%;height:100%;font-size:16px}
   <div id="fence-info"></div>
 </div>
 <div id="add-panel">
-  <h3>📍 添加电子围栏</h3>
+  <h3 id="add-panel-title">📍 添加电子围栏</h3>
   <p class="hint">拖拽蓝色圆心移动 • 拖拽橙色圆点调整大小</p>
   <label>围栏名称</label>
   <input type="text" id="fence-name" placeholder="如：家、公园" maxlength="20">
   <label>半径（米）</label>
-  <input type="number" id="fence-radius" value="200" min="50" max="2000">
+  <input type="number" id="fence-radius" value="200" min="50" max="2000" oninput="handleRadiusInput()">
   <p style="font-size:12px;color:#999;margin-top:2px">范围：50-2000米</p>
   <button onclick="saveFence()">💾 保存围栏</button>
 </div>
@@ -185,6 +189,33 @@ function initMap(lat,lng){
 }
 
 function je(s){return s.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n')}
+var editingFenceId=null;
+function showLoading(text){
+  var el=document.getElementById('loading');
+  if(el){el.textContent=text||'加载中...';el.style.display='block'}
+}
+function hideLoading(){
+  var el=document.getElementById('loading');
+  if(el)el.style.display='none'
+}
+function handleRadiusInput(){
+  if(!ctr)return;
+  var r=parseInt(document.getElementById('fence-radius').value)||200;
+  cRad=Math.max(50,Math.min(2000,r));
+  editCircle.setRadius(cRad);
+  updEdge()
+}
+function editFence(id,name,lat,lng,radius){
+  if(!map)return;
+  clearFences();
+  if(elderMarker)map.removeLayer(elderMarker);
+  document.getElementById('info-panel').style.display='none';
+  setupEditableFence(lat,lng,radius);
+  document.getElementById('fence-name').value=name;
+  document.getElementById('fence-radius').value=radius;
+  document.getElementById('add-panel-title').textContent='✏️ 编辑围栏';
+  editingFenceId=id
+}
 
 function setElderLocation(lat,lng,name,time){
   if(!map)initMap(lat,lng);
@@ -265,9 +296,12 @@ function saveFence(){
   if(!ctr)return;
   var n=document.getElementById('fence-name').value.trim()||'围栏';
   var r=parseInt(document.getElementById('fence-radius').value)||200;
+  r=Math.max(50,Math.min(2000,r));
   var wgs=gcj2wgs(ctr.lat,ctr.lng);
-  if(window.Android)window.Android.onSaveFence(n,wgs[0],wgs[1],r);
-  else alert('保存失败：请重试');
+  if(window.Android){
+    if(editingFenceId){window.Android.onUpdateFence(editingFenceId,n,wgs[0],wgs[1],r)}
+    else{window.Android.onSaveFence(n,wgs[0],wgs[1],r)}
+  }else{alert('保存失败：请重试')}
 }
 
 function showSingleFence(name,lat,lng,radius,isBreached){
@@ -419,7 +453,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
     // 工具函数
     // ========================================
     private fun evalJs(js: String) {
-        webView.evaluateJavascript("javascript:$js", null)
+        webView.evaluateJavascript(js, null)
     }
 
     private fun esc(s: String): String {
