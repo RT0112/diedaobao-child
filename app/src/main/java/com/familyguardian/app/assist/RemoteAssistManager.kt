@@ -167,6 +167,7 @@ class RemoteAssistManager(private val context: Context) {
 
         framePollJob = CoroutineScope(Dispatchers.IO).launch {
             var emptyCount = 0
+            var decodeFailCount = 0
             while (isActive) {
                 try {
                     val json = httpPost(JSONObject().apply {
@@ -177,32 +178,56 @@ class RemoteAssistManager(private val context: Context) {
 
                     if (json.optBoolean("hasNewFrame", false)) {
                         emptyCount = 0
-                        val frame = json.optJSONObject("frame") ?: continue
+                        val frame = json.optJSONObject("frame")
+                        if (frame == null) {
+                            Log.w(TAG, "poll_frame: frame字段缺失")
+                            continue
+                        }
                         val b64 = frame.optString("data", "")
                         val w = frame.optInt("width", 720)
                         val h = frame.optInt("height", 1280)
                         lastFrameNum = json.optInt("frameNum", lastFrameNum)
 
-                        if (b64.isNotEmpty()) {
-                            val bytes = Base64.decode(b64, Base64.DEFAULT)
-                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                            if (bitmap != null) {
-                                if (currentState != State.STREAMING) {
-                                    elderScreenWidth = w
-                                    elderScreenHeight = h
-                                    updateState(State.STREAMING, null)
-                                }
-                                Handler(android.os.Looper.getMainLooper()).post {
-                                    onFrameReceived?.invoke(bitmap, w, h)
-                                }
+                        if (b64.isEmpty()) {
+                            Log.w(TAG, "poll_frame: data字段为空")
+                            continue
+                        }
+
+                        val bytes = Base64.decode(b64, Base64.DEFAULT)
+                        if (bytes.isEmpty()) {
+                            Log.w(TAG, "poll_frame: Base64解码后为空")
+                            continue
+                        }
+
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            decodeFailCount = 0
+                            if (currentState != State.STREAMING) {
+                                elderScreenWidth = w
+                                elderScreenHeight = h
+                                updateState(State.STREAMING, null)
+                            }
+                            Handler(android.os.Looper.getMainLooper()).post {
+                                onFrameReceived?.invoke(bitmap, w, h)
+                            }
+                        } else {
+                            decodeFailCount++
+                            Log.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, decodeFailCount=$decodeFailCount")
+                            if (decodeFailCount >= 3) {
+                                updateState(State.ERROR, "画面数据异常，请重新发起协助")
+                                return@launch
                             }
                         }
                     } else {
                         emptyCount++
-                        // 等待中显示为 CONNECTING
+                        val msg = json.optString("message", "")
+                        val targetId = json.optString("targetId", "")
+                        val bufSize = json.optInt("bufferSize", -1)
+                        Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
+
+                        // 等待中显示为 CONNECTING，每30次(~7.5s)刷新提示
                         if (currentState == State.CONNECTING && emptyCount > 30) {
-                            // ~7.5s 没帧
-                            updateState(State.CONNECTING, "等待屏幕画面...")
+                            updateState(State.CONNECTING, "等待屏幕画面...(${emptyCount}次轮询)")
                             emptyCount = 0
                         }
                     }
