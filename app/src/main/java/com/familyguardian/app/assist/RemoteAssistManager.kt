@@ -61,6 +61,7 @@ class RemoteAssistManager(private val context: Context) {
     private var currentState = State.IDLE
     private var elderScreenWidth = 720
     private var elderScreenHeight = 1280
+    private var requestStartTime = 0L
 
     fun initialize(guardianUserId: String, boundElderId: String) {
         userId = guardianUserId
@@ -99,6 +100,7 @@ class RemoteAssistManager(private val context: Context) {
                 val code = json.optInt("code", 0)
 
                 if (code == 200) {
+                    requestStartTime = System.currentTimeMillis()
                     updateState(State.REQUESTING, "等待老人响应...")
                     startStatusPolling() // 轮询老人是否响应
                 } else {
@@ -124,7 +126,15 @@ class RemoteAssistManager(private val context: Context) {
         signalingJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive && isPolling) {
                 try {
-                    val status = pollAssistStatus()
+                    // 检查本地超时（60秒）
+                    val elapsed = System.currentTimeMillis() - requestStartTime
+                    if (elapsed > 60_000) {
+                        updateState(State.TIMEOUT, "等待超时，老人未响应")
+                        cancelRemoteRequest()
+                        return@launch
+                    }
+
+                    val (status, message) = pollFullStatus()
                     when (status) {
                         "active" -> {
                             stopStatusPollingDirectly()
@@ -134,10 +144,20 @@ class RemoteAssistManager(private val context: Context) {
                             startConnection()
                             return@launch
                         }
+                        "rejected" -> {
+                            updateState(State.REJECTED, "老人拒绝了协助请求")
+                            return@launch
+                        }
+                        "cancelled" -> {
+                            updateState(State.ERROR, "请求已被取消")
+                            return@launch
+                        }
+                        // "idle" 可能是请求刚发出或老人拒绝后状态清除
+                        // 仅在已 REQUESTING 几秒后仍 idle 才判断
                         "idle" -> {
-                            if (currentState == State.REQUESTING) {
-                                // 可能是被拒绝（需要进一步判断）
-                                // 如果之前已经 REQUESTING 了一段时间 → 可能是超时
+                            if (elapsed > 10_000) {
+                                updateState(State.TIMEOUT, "请求未送达，老人可能不在线")
+                                return@launch
                             }
                         }
                     }
@@ -154,7 +174,19 @@ class RemoteAssistManager(private val context: Context) {
         signalingJob?.cancel()
     }
 
-    private suspend fun pollAssistStatus(): String {
+    /**
+     * 子女端主动取消请求
+     */
+    fun cancelRequest() {
+        if (currentState != State.REQUESTING) return
+        stopStatusPollingDirectly()
+        CoroutineScope(Dispatchers.IO).launch {
+            cancelRemoteRequest()
+        }
+        updateState(State.IDLE, null)
+    }
+
+    private suspend fun pollFullStatus(): Pair<String, String?> {
         val url = URL(SIGNAL_URL)
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
@@ -170,7 +202,32 @@ class RemoteAssistManager(private val context: Context) {
         conn.outputStream.write(body.toString().toByteArray())
 
         val response = conn.inputStream.bufferedReader().readText()
-        return JSONObject(response).optString("status", "idle")
+        val json = JSONObject(response)
+        val status = json.optString("status", "idle")
+        val msg = json.optString("message", null)
+        return Pair(status, msg)
+    }
+
+    private suspend fun cancelRemoteRequest() {
+        try {
+            val url = URL(SIGNAL_URL)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+
+            val body = JSONObject().apply {
+                put("action", "cancel")
+                put("elderId", elderId)
+                put("guardianId", userId)
+            }
+            conn.outputStream.write(body.toString().toByteArray())
+            conn.inputStream.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "取消请求异常: ${e.message}")
+        }
     }
 
     private suspend fun pollSessionId(): String? {

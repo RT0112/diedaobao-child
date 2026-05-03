@@ -33,6 +33,7 @@ class RemoteAssistFragment : Fragment() {
     private lateinit var tvErrorMsg: TextView
     private lateinit var btnStart: Button
     private lateinit var btnEnd: Button
+    private lateinit var btnCancel: Button
     private lateinit var btnRetry: Button
     private lateinit var tvTimer: TextView
 
@@ -55,6 +56,7 @@ class RemoteAssistFragment : Fragment() {
         tvErrorMsg = view.findViewById(R.id.tv_error_msg)
         btnStart = view.findViewById(R.id.btn_start_assist)
         btnEnd = view.findViewById(R.id.btn_end_assist)
+        btnCancel = view.findViewById(R.id.btn_cancel_request)
         btnRetry = view.findViewById(R.id.btn_retry)
         tvTimer = view.findViewById(R.id.tv_timer)
         videoRenderer = view.findViewById(R.id.video_renderer)
@@ -111,6 +113,7 @@ class RemoteAssistFragment : Fragment() {
         // 按钮事件
         btnStart.setOnClickListener { onStartClicked() }
         btnEnd.setOnClickListener { onEndClicked() }
+        btnCancel.setOnClickListener { onCancelClicked() }
         btnRetry.setOnClickListener {
             showIdle()
             onStartClicked()
@@ -175,6 +178,13 @@ class RemoteAssistFragment : Fragment() {
     private fun onEndClicked() {
         stopTimer()
         manager.endAssist()
+        showIdle()
+    }
+
+    private fun onCancelClicked() {
+        stopTimer()
+        manager.cancelRequest()
+        Toast.makeText(requireContext(), "已取消远程协助请求", Toast.LENGTH_SHORT).show()
         showIdle()
     }
 

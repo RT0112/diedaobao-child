@@ -81,6 +81,16 @@
             android:text="等待老人同意请求"
             android:textSize="13sp"
             android:textColor="#BDBDBD" />
+
+        <Button
+            android:id="@+id/btn_cancel_request"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:layout_marginTop="24dp"
+            android:text="取消请求"
+            android:textColor="#757575"
+            android:textSize="14sp" />
     </LinearLayout>
 
     <!-- 协助中 -->
