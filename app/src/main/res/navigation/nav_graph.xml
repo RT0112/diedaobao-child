@@ -24,4 +24,9 @@
         android:name="com.familyguardian.app.ui.SettingsFragment"
         android:label="@string/title_settings" />
 
+    <fragment
+        android:id="@+id/nav_remote_assist"
+        android:name="com.familyguardian.app.ui.RemoteAssistFragment"
+        android:label="@string/title_remote_assist" />
+
 </navigation>

@@ -35,4 +35,7 @@
     <string name="bind">绑定</string>
     <string name="bind_success">绑定成功</string>
     <string name="bind_failed">绑定失败</string>
+    
+    <!-- Remote Assist -->
+    <string name="title_remote_assist">远程协助</string>
 </resources>

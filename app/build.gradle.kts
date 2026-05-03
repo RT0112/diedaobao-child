@@ -19,8 +19,8 @@ android {
         applicationId = "com.familyguardian.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.7.4"
+        versionCode = 12
+        versionName = "0.8.0"
 
         // 多架构支持：arm64-v8a (红米/华为等主流) + armeabi-v7a (老旧设备)
         ndk {
@@ -98,6 +98,15 @@ dependencies {
     
     // SwipeRefreshLayout
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
+    // WebRTC — 远程协助屏幕共享（Stream wrapper，封装 Google WebRTC AAR）
+    implementation("io.getstream:stream-webrtc-android:1.1.1")
+
+    // DataChannel JSON 序列化
+    implementation("org.json:json:20231013")
+
+    // Audio — 远程协助语音通话
+    implementation("androidx.media:media:1.7.0")
     
     // Testing
     testImplementation("junit:junit:4.13.2")
