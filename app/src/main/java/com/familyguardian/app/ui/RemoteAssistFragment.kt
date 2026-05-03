@@ -1,30 +1,21 @@
 package com.familyguardian.app.ui
 
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.view.*
 import android.widget.*
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.R
 import com.familyguardian.app.assist.RemoteAssistManager
 import com.familyguardian.app.cloud.CloudBaseClient
-import org.webrtc.*
 
 /**
- * 远程协助 Fragment（子女端）
- * 
- * 三阶段界面：
- * 1. 发起阶段 — "发起协助"按钮
- * 2. 等待阶段 — loading + 倒计时
- * 3. 协助中 — 屏幕画面 + 触控操作 + 结束按钮
+ * 远程协助 Fragment（子女端 v2 — 去掉 WebRTC，用 HTTP 帧中继）
  */
 class RemoteAssistFragment : Fragment() {
 
     private lateinit var manager: RemoteAssistManager
-    private var surfaceView: SurfaceView? = null
-    private var videoRenderer: SurfaceViewRenderer? = null
 
-    // UI 组件
     private lateinit var containerIdle: View
     private lateinit var containerWaiting: View
     private lateinit var containerAssisting: View
@@ -36,9 +27,12 @@ class RemoteAssistFragment : Fragment() {
     private lateinit var btnCancel: Button
     private lateinit var btnRetry: Button
     private lateinit var tvTimer: TextView
+    private lateinit var ivScreen: ImageView
 
     private var startTime = 0L
     private var timerRunning = false
+    private var elderScreenW = 720
+    private var elderScreenH = 1280
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         return inflater.inflate(R.layout.fragment_remote_assist, container, false)
@@ -47,7 +41,6 @@ class RemoteAssistFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // 查找视图
         containerIdle = view.findViewById(R.id.container_idle)
         containerWaiting = view.findViewById(R.id.container_waiting)
         containerAssisting = view.findViewById(R.id.container_assisting)
@@ -59,20 +52,16 @@ class RemoteAssistFragment : Fragment() {
         btnCancel = view.findViewById(R.id.btn_cancel_request)
         btnRetry = view.findViewById(R.id.btn_retry)
         tvTimer = view.findViewById(R.id.tv_timer)
-        videoRenderer = view.findViewById(R.id.video_renderer)
+        ivScreen = view.findViewById(R.id.iv_screen)
 
-        // 初始化 VideoRenderer
-        videoRenderer?.init(EglBase.create().eglBaseContext, null)
-        videoRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-        videoRenderer?.setEnableHardwareScaler(true)
+        // 缩放型适配（保持比例）
+        ivScreen.scaleType = ImageView.ScaleType.FIT_CENTER
 
-        // 初始化管理器
         manager = RemoteAssistManager(requireContext())
-        val userId = requireContext().getSharedPreferences("cloudbase_prefs", android.content.Context.MODE_PRIVATE)
-            .getString("user_id", null) ?: ""
-        manager.initialize(userId, CloudBaseClient.getElderId() ?: "")
+        val prefs = requireContext().getSharedPreferences("cloudbase_prefs", android.content.Context.MODE_PRIVATE)
+        val uid = prefs.getString("user_id", null) ?: ""
+        manager.initialize(uid, CloudBaseClient.getElderId() ?: "")
 
-        // 监听状态变化
         manager.onStateChange = { state, msg ->
             activity?.runOnUiThread {
                 when (state) {
@@ -84,46 +73,27 @@ class RemoteAssistFragment : Fragment() {
                         startTimer()
                         showAssisting()
                     }
-                    RemoteAssistManager.State.DISCONNECTED -> {
-                        stopTimer()
-                        showError(msg ?: "连接已断开")
-                    }
-                    RemoteAssistManager.State.ERROR -> {
-                        stopTimer()
-                        showError(msg ?: "发生错误")
-                    }
+                    RemoteAssistManager.State.DISCONNECTED -> { stopTimer(); showError(msg ?: "连接已断开") }
+                    RemoteAssistManager.State.ERROR -> { stopTimer(); showError(msg ?: "发生错误") }
                     RemoteAssistManager.State.REJECTED -> showError("老人拒绝了协助请求")
                     RemoteAssistManager.State.TIMEOUT -> showError("等待超时，老人未响应")
                 }
             }
         }
 
-        // 监听视频轨道
-        manager.onVideoTrackReady = { track ->
-            activity?.runOnUiThread {
-                track.addSink(videoRenderer)
-            }
+        manager.onFrameReceived = { bitmap, w, h ->
+            elderScreenW = w
+            elderScreenH = h
+            ivScreen.setImageBitmap(bitmap)
         }
 
-        // 监听屏幕尺寸
-        manager.onScreenSizeReceived = { w, h ->
-            // 可用于坐标换算
-        }
-
-        // 按钮事件
         btnStart.setOnClickListener { onStartClicked() }
         btnEnd.setOnClickListener { onEndClicked() }
         btnCancel.setOnClickListener { onCancelClicked() }
-        btnRetry.setOnClickListener {
-            showIdle()
-            onStartClicked()
-        }
+        btnRetry.setOnClickListener { showIdle(); onStartClicked() }
 
-        // 视频区域触控事件
-        videoRenderer?.setOnTouchListener { _, event ->
-            handleTouchEvent(event)
-            true
-        }
+        // 屏幕触摸事件
+        ivScreen.setOnTouchListener { _, event -> handleTouch(event); true }
 
         showIdle()
     }
@@ -160,8 +130,6 @@ class RemoteAssistFragment : Fragment() {
 
     private fun onStartClicked() {
         val guardianName = CloudBaseClient.getUserName().ifEmpty { "家属" }
-
-        // 从 SharedPreferences 获取 userId
         val prefs = requireContext().getSharedPreferences("cloudbase_prefs", android.content.Context.MODE_PRIVATE)
         val uid = prefs.getString("user_id", null)
         val eid = CloudBaseClient.getElderId()
@@ -188,42 +156,32 @@ class RemoteAssistFragment : Fragment() {
         showIdle()
     }
 
-    private fun handleTouchEvent(event: MotionEvent) {
-        if (manager.onVideoTrackReady == null) return
+    private fun handleTouch(event: MotionEvent) {
+        if (manager.onFrameReceived == null) return
+        if (elderScreenW <= 0 || elderScreenH <= 0) return
 
-        val elderW = manager.getElderScreenSize().first
-        val elderH = manager.getElderScreenSize().second
-
-        if (elderW <= 0 || elderH <= 0) return
-
-        val viewW = videoRenderer?.width ?: return
-        val viewH = videoRenderer?.height ?: return
-
+        val viewW = ivScreen.width
+        val viewH = ivScreen.height
         if (viewW <= 0 || viewH <= 0) return
 
-        // 坐标换算：从 SurfaceView 坐标 → 老人端屏幕坐标
-        val scaleX = elderW.toFloat() / viewW
-        val scaleY = elderH.toFloat() / viewH
+        // 坐标换算：ImageView 坐标 → 老人端屏幕坐标
+        val scaleX = elderScreenW.toFloat() / viewW
+        val scaleY = elderScreenH.toFloat() / viewH
         val elderX = event.x * scaleX
         val elderY = event.y * scaleY
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                // 记录起始位置（用于判断是否为滑动）
-                videoRenderer?.tag = floatArrayOf(event.x, event.y, elderX, elderY)
+                ivScreen.tag = floatArrayOf(event.x, event.y, elderX, elderY)
             }
             MotionEvent.ACTION_UP -> {
-                val start = videoRenderer?.tag as? FloatArray
-                if (start != null && start.size >= 4) {
-                    val dx = Math.abs(event.x - start[0])
-                    val dy = Math.abs(event.y - start[1])
-                    if (dx < 20 && dy < 20) {
-                        // 点击（移动距离小）
-                        manager.sendClick(start[2], start[3])
-                    } else {
-                        // 滑动
-                        manager.sendSwipe(start[2], start[3], elderX, elderY)
-                    }
+                val start = ivScreen.tag as? FloatArray ?: return
+                val dx = Math.abs(event.x - start[0])
+                val dy = Math.abs(event.y - start[1])
+                if (dx < 20 && dy < 20) {
+                    manager.sendClick(start[2], start[3])
+                } else {
+                    manager.sendSwipe(start[2], start[3], elderX, elderY)
                 }
             }
         }
@@ -235,22 +193,18 @@ class RemoteAssistFragment : Fragment() {
         updateTimer()
     }
 
-    private fun stopTimer() {
-        timerRunning = false
-    }
+    private fun stopTimer() { timerRunning = false }
 
     private fun updateTimer() {
         if (!timerRunning) return
-        val elapsed = (System.currentTimeMillis() - startTime) / 1000
-        val min = elapsed / 60
-        val sec = elapsed % 60
-        tvTimer.text = String.format("%d:%02d", min, sec)
+        val sec = (System.currentTimeMillis() - startTime) / 1000
+        tvTimer.text = String.format("%d:%02d", sec / 60, sec % 60)
         tvTimer.postDelayed({ updateTimer() }, 1000)
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
+        stopTimer()
         manager.dispose()
-        videoRenderer?.release()
     }
 }

@@ -1,72 +1,56 @@
 package com.familyguardian.app.assist
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Handler
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.*
-import org.webrtc.*
 import org.json.JSONObject
-import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
  * 子女端远程协助管理器
  * 
- * 职责：
- * 1. 发起协助请求（通过 CloudBase）
- * 2. WebRTC PeerConnection 建立（answer 应答方）
- * 3. 接收老人端屏幕画面
- * 4. 发送触控指令（通过 DataChannel）
- * 5. 轮询信令消息
- * 6. 结束协助
+ * 架构（v2 去掉 WebRTC P2P，改用 CloudBase 帧中继）：
+ * 1. 发起协助请求 → HTTP POST /remote-assist action=request
+ * 2. 轮询状态          → HTTP POST /remote-assist action=check_status
+ * 3. 老人同意后拉取屏幕帧 → HTTP POST /remote-assist action=poll_frame
+ * 4. 发送触控指令      → HTTP POST /remote-assist action=signal (type=touch)
+ * 5. 结束协助          → HTTP POST /remote-assist action=end
  */
 class RemoteAssistManager(private val context: Context) {
 
     companion object {
         private const val TAG = "RemoteAssistManager"
-        private const val SIGNAL_URL = "https://diedaobao-cdn-d4g496tvv296f0ac2-1409685971.ap-shanghai.app.tcloudbase.com/remote-assist"
-
-        private val ICE_SERVERS = listOf(
-            PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-        )
+        private const val SIGNAL_URL =
+            "https://diedaobao-cdn-d4g496tvv296f0ac2-1409685971.ap-shanghai.app.tcloudbase.com/remote-assist"
+        private const val STATUS_POLL_MS = 2000L
+        private const val FRAME_POLL_MS = 250L   // ~4fps 拉取
+        private const val REQUEST_TIMEOUT_MS = 60_000L
     }
 
-    // 状态
     enum class State {
         IDLE, REQUESTING, ACCEPTED, CONNECTING, STREAMING, DISCONNECTED, ERROR, REJECTED, TIMEOUT
     }
 
-    // 回调
     var onStateChange: ((State, String?) -> Unit)? = null
-    var onVideoTrackReady: ((VideoTrack) -> Unit)? = null
-    var onScreenSizeReceived: ((Int, Int) -> Unit)? = null
+    var onFrameReceived: ((Bitmap, Int, Int) -> Unit)? = null
 
-    // WebRTC
-    private var eglBase: EglBase? = null
-    private var peerConnectionFactory: PeerConnectionFactory? = null
-    private var peerConnection: PeerConnection? = null
-    private var remoteVideoTrack: VideoTrack? = null
-    private var remoteAudioTrack: AudioTrack? = null
-    private var dataChannel: DataChannel? = null
-
-    // 信令轮询
-    private var signalingJob: Job? = null
-    private var isPolling = false
-
-    // 会话
     private var userId: String? = null
     private var elderId: String? = null
-    private var sessionId: String? = null
     private var currentState = State.IDLE
+    private var requestStartTime = 0L
+    private var framePollJob: Job? = null
+    private var lastFrameNum = 0
     private var elderScreenWidth = 720
     private var elderScreenHeight = 1280
-    private var requestStartTime = 0L
 
     fun initialize(guardianUserId: String, boundElderId: String) {
         userId = guardianUserId
         elderId = boundElderId
-        initializeWebRTC()
         Log.i(TAG, "初始化: userId=$userId, elderId=$elderId")
     }
 
@@ -74,35 +58,23 @@ class RemoteAssistManager(private val context: Context) {
 
     fun requestAssist(guardianName: String) {
         if (currentState == State.REQUESTING || currentState == State.STREAMING) return
-
         updateState(State.REQUESTING, null)
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val url = URL(SIGNAL_URL)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-
                 val body = JSONObject().apply {
                     put("action", "request")
                     put("elderId", elderId)
                     put("guardianId", userId)
                     put("guardianName", guardianName)
                 }
-                conn.outputStream.write(body.toString().toByteArray())
-
-                val response = conn.inputStream.bufferedReader().readText()
-                val json = JSONObject(response)
+                val json = httpPost(body)
                 val code = json.optInt("code", 0)
 
                 if (code == 200) {
                     requestStartTime = System.currentTimeMillis()
                     updateState(State.REQUESTING, "等待老人响应...")
-                    startStatusPolling() // 轮询老人是否响应
+                    startStatusPolling()
                 } else {
                     val msg = json.optString("message", "请求失败")
                     when (code) {
@@ -118,30 +90,48 @@ class RemoteAssistManager(private val context: Context) {
         }
     }
 
+    fun cancelRequest() {
+        if (currentState != State.REQUESTING) return
+        stopPolling()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                httpPost(JSONObject().apply {
+                    put("action", "cancel")
+                    put("elderId", elderId)
+                    put("guardianId", userId)
+                })
+            } catch (_: Exception) {}
+        }
+        updateState(State.IDLE, null)
+    }
+
     // ==================== 状态轮询 ====================
+
+    private var statusPollJob: Job? = null
 
     private fun startStatusPolling() {
         stopPolling()
-        isPolling = true
-        signalingJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive && isPolling) {
+        statusPollJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
                 try {
-                    // 检查本地超时（60秒）
                     val elapsed = System.currentTimeMillis() - requestStartTime
-                    if (elapsed > 60_000) {
+                    if (elapsed > REQUEST_TIMEOUT_MS) {
                         updateState(State.TIMEOUT, "等待超时，老人未响应")
                         cancelRemoteRequest()
                         return@launch
                     }
 
-                    val (status, message) = pollFullStatus()
-                    when (status) {
+                    val json = httpPost(JSONObject().apply {
+                        put("action", "check_status")
+                        put("elderId", elderId)
+                    })
+
+                    when (json.optString("status", "idle")) {
                         "active" -> {
-                            stopStatusPollingDirectly()
-                            sessionId = pollSessionId()
-                            updateState(State.ACCEPTED, "老人已接受，正在建立连接...")
+                            statusPollJob?.cancel()
+                            updateState(State.ACCEPTED, "老人已接受")
                             delay(500)
-                            startConnection()
+                            startFramePolling()
                             return@launch
                         }
                         "rejected" -> {
@@ -152,433 +142,115 @@ class RemoteAssistManager(private val context: Context) {
                             updateState(State.ERROR, "请求已被取消")
                             return@launch
                         }
-                        // "idle" 可能是请求刚发出或老人拒绝后状态清除
-                        // 仅在已 REQUESTING 几秒后仍 idle 才判断
-                        "idle" -> {
-                            if (elapsed > 10_000) {
-                                updateState(State.TIMEOUT, "请求未送达，老人可能不在线")
-                                return@launch
-                            }
-                        }
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "状态轮询异常: ${e.message}")
-                }
-                delay(2000) // 每2秒轮询
+                } catch (_: Exception) {}
+                delay(STATUS_POLL_MS)
             }
         }
-    }
-
-    private fun stopStatusPollingDirectly() {
-        isPolling = false
-        signalingJob?.cancel()
-    }
-
-    /**
-     * 子女端主动取消请求
-     */
-    fun cancelRequest() {
-        if (currentState != State.REQUESTING) return
-        stopStatusPollingDirectly()
-        CoroutineScope(Dispatchers.IO).launch {
-            cancelRemoteRequest()
-        }
-        updateState(State.IDLE, null)
-    }
-
-    private suspend fun pollFullStatus(): Pair<String, String?> {
-        val url = URL(SIGNAL_URL)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 5000
-        conn.readTimeout = 5000
-
-        val body = JSONObject().apply {
-            put("action", "check_status")
-            put("elderId", elderId)
-        }
-        conn.outputStream.write(body.toString().toByteArray())
-
-        val response = conn.inputStream.bufferedReader().readText()
-        val json = JSONObject(response)
-        val status = json.optString("status", "idle")
-        val msg = json.optString("message", null)
-        return Pair(status, msg)
     }
 
     private suspend fun cancelRemoteRequest() {
         try {
-            val url = URL(SIGNAL_URL)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.doOutput = true
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-
-            val body = JSONObject().apply {
+            httpPost(JSONObject().apply {
                 put("action", "cancel")
                 put("elderId", elderId)
                 put("guardianId", userId)
-            }
-            conn.outputStream.write(body.toString().toByteArray())
-            conn.inputStream.close()
-        } catch (e: Exception) {
-            Log.e(TAG, "取消请求异常: ${e.message}")
-        }
+            })
+        } catch (_: Exception) {}
     }
 
-    private suspend fun pollSessionId(): String? {
-        val url = URL(SIGNAL_URL)
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 5000
-        conn.readTimeout = 5000
+    // ==================== 帧拉取 ====================
 
-        val body = JSONObject().apply {
-            put("action", "check_status")
-            put("elderId", elderId)
-        }
-        conn.outputStream.write(body.toString().toByteArray())
+    private fun startFramePolling() {
+        updateState(State.CONNECTING, "等待屏幕画面...")
+        lastFrameNum = 0
 
-        val response = conn.inputStream.bufferedReader().readText()
-        val json = JSONObject(response)
-        return json.optString("sessionId", null)
-    }
-
-    // ==================== WebRTC 连接 ====================
-
-    private fun initializeWebRTC() {
-        try {
-            val options = PeerConnectionFactory.InitializationOptions.builder(context)
-                .createInitializationOptions()
-            PeerConnectionFactory.initialize(options)
-
-            eglBase = EglBase.create()
-
-            val encoderFactory = DefaultVideoEncoderFactory(eglBase?.eglBaseContext, true, true)
-            val decoderFactory = DefaultVideoDecoderFactory(eglBase?.eglBaseContext)
-
-            peerConnectionFactory = PeerConnectionFactory.builder()
-                .setVideoEncoderFactory(encoderFactory)
-                .setVideoDecoderFactory(decoderFactory)
-                .createPeerConnectionFactory()
-
-            Log.i(TAG, "WebRTC 初始化完成")
-        } catch (e: Exception) {
-            Log.e(TAG, "WebRTC 初始化失败: ${e.message}")
-        }
-    }
-
-    private fun startConnection() {
-        updateState(State.CONNECTING, "建立 P2P 连接...")
-        
-        peerConnection = createPeerConnection()
-        if (peerConnection == null) {
-            updateState(State.ERROR, "创建连接失败")
-            return
-        }
-
-        // 开始信令轮询（接收 offer）
-        startSignalingPoll()
-    }
-
-    private fun createPeerConnection(): PeerConnection? {
-        return try {
-            val rtcConfig = PeerConnection.RTCConfiguration(ICE_SERVERS).apply {
-                tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
-                continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
-                sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            }
-
-            val observer = object : PeerConnection.Observer {
-                override fun onIceCandidate(candidate: IceCandidate) {
-                    sendSignal(mapOf(
-                        "type" to "ice_candidate",
-                        "candidate" to mapOf(
-                            "sdp" to candidate.sdp,
-                            "sdpMid" to candidate.sdpMid,
-                            "sdpMLineIndex" to candidate.sdpMLineIndex
-                        )
-                    ))
-                }
-                override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
-                override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
-                override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                    Log.i(TAG, "ICE 状态: $state")
-                    when (state) {
-                        PeerConnection.IceConnectionState.CONNECTED -> {
-                            updateState(State.STREAMING, null)
-                            // 请求屏幕尺寸
-                            sendTouchCommand("""{"action":"screen_size"}""")
-                        }
-                        PeerConnection.IceConnectionState.DISCONNECTED,
-                        PeerConnection.IceConnectionState.FAILED,
-                        PeerConnection.IceConnectionState.CLOSED -> {
-                            updateState(State.DISCONNECTED, "连接已断开")
-                        }
-                        else -> Unit
-                    }
-                }
-                override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
-                override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
-                override fun onAddStream(stream: MediaStream?) = Unit
-                override fun onRemoveStream(stream: MediaStream?) = Unit
-                override fun onDataChannel(channel: DataChannel) {
-                    setupDataChannel(channel)
-                }
-                override fun onRenegotiationNeeded() = Unit
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                    val track = receiver?.track()
-                    if (track is VideoTrack) {
-                        remoteVideoTrack = track
-                        Handler(android.os.Looper.getMainLooper()).post {
-                            onVideoTrackReady?.invoke(track)
-                        }
-                        Log.i(TAG, "收到远端视频轨")
-                    } else if (track is AudioTrack) {
-                        remoteAudioTrack = track
-                        Log.i(TAG, "收到远端音频轨")
-                    }
-                }
-            }
-
-            val pc = peerConnectionFactory?.createPeerConnection(rtcConfig, observer)
-
-            // 创建音频源（用于语音通话）
-            val audioConstraints = MediaConstraints()
-            val audioSource = peerConnectionFactory?.createAudioSource(audioConstraints)
-            val audioTrack = peerConnectionFactory?.createAudioTrack("voice_audio", audioSource)
-            if (audioTrack != null) {
-                pc?.addTrack(audioTrack, listOf("voice"))
-            }
-
-            pc
-        } catch (e: Exception) {
-            Log.e(TAG, "创建 PeerConnection 失败: ${e.message}")
-            null
-        }
-    }
-
-    private fun setupDataChannel(channel: DataChannel?) {
-        dataChannel = channel
-        channel?.registerObserver(object : DataChannel.Observer {
-            override fun onStateChange() {
-                Log.i(TAG, "DataChannel 状态: ${channel.state()}")
-            }
-            override fun onMessage(buffer: DataChannel.Buffer) {
-                // 接收老人端消息（如屏幕尺寸）
+        framePollJob = CoroutineScope(Dispatchers.IO).launch {
+            var emptyCount = 0
+            while (isActive) {
                 try {
-                    val bytes = ByteArray(buffer.data.remaining())
-                    buffer.data.get(bytes)
-                    val json = JSONObject(String(bytes))
-                    val type = json.optString("type")
-                    if (type == "screen_size") {
-                        val w = json.optInt("width", 720)
-                        val h = json.optInt("height", 1280)
-                        elderScreenWidth = w
-                        elderScreenHeight = h
-                        Handler(android.os.Looper.getMainLooper()).post {
-                            onScreenSizeReceived?.invoke(w, h)
+                    val json = httpPost(JSONObject().apply {
+                        put("action", "poll_frame")
+                        put("elderId", elderId)
+                        put("lastFrameNum", lastFrameNum)
+                    })
+
+                    if (json.optBoolean("hasNewFrame", false)) {
+                        emptyCount = 0
+                        val frame = json.optJSONObject("frame") ?: continue
+                        val b64 = frame.optString("data", "")
+                        val w = frame.optInt("width", 720)
+                        val h = frame.optInt("height", 1280)
+                        lastFrameNum = json.optInt("frameNum", lastFrameNum)
+
+                        if (b64.isNotEmpty()) {
+                            val bytes = Base64.decode(b64, Base64.DEFAULT)
+                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bitmap != null) {
+                                if (currentState != State.STREAMING) {
+                                    elderScreenWidth = w
+                                    elderScreenHeight = h
+                                    updateState(State.STREAMING, null)
+                                }
+                                Handler(android.os.Looper.getMainLooper()).post {
+                                    onFrameReceived?.invoke(bitmap, w, h)
+                                }
+                            }
                         }
+                    } else {
+                        emptyCount++
+                        // 等待中显示为 CONNECTING
+                        if (currentState == State.CONNECTING && emptyCount > 30) {
+                            // ~7.5s 没帧
+                            updateState(State.CONNECTING, "等待屏幕画面...")
+                            emptyCount = 0
+                        }
+                    }
+
+                    // 检查屏幕就绪
+                    val status = json.optString("status", "")
+                    if (status == "idle") {
+                        updateState(State.DISCONNECTED, "老人端已断开")
+                        return@launch
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "DataChannel 消息异常: ${e.message}")
+                    Log.e(TAG, "帧拉取异常: ${e.message}")
                 }
+                delay(FRAME_POLL_MS)
             }
-            override fun onBufferedAmountChange(previousAmount: Long) = Unit
-        })
+        }
     }
 
     // ==================== 触控指令 ====================
 
     fun sendClick(x: Float, y: Float) {
-        // 坐标已经是老人端屏幕坐标（由 UI 层换算）
-        sendTouchCommand(JSONObject().apply {
-            put("action", "click")
-            put("x", x)
-            put("y", y)
-            put("duration", 100L)
-        }.toString())
+        sendTouchSignal("click", mapOf("x" to x, "y" to y, "duration" to 100L))
     }
 
     fun sendLongClick(x: Float, y: Float) {
-        sendTouchCommand(JSONObject().apply {
-            put("action", "click")
-            put("x", x)
-            put("y", y)
-            put("duration", 800L)
-        }.toString())
+        sendTouchSignal("click", mapOf("x" to x, "y" to y, "duration" to 800L))
     }
 
     fun sendSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
-        sendTouchCommand(JSONObject().apply {
-            put("action", "swipe")
-            put("x1", x1)
-            put("y1", y1)
-            put("x2", x2)
-            put("y2", y2)
-            put("duration", 300L)
-        }.toString())
-    }
-
-    fun sendDoubleClick(x: Float, y: Float) {
-        sendTouchCommand(JSONObject().apply {
-            put("action", "double_click")
-            put("x", x)
-            put("y", y)
-        }.toString())
+        sendTouchSignal("swipe", mapOf("x1" to x1, "y1" to y1, "x2" to x2, "y2" to y2, "duration" to 300L))
     }
 
     fun getElderScreenSize(): Pair<Int, Int> = Pair(elderScreenWidth, elderScreenHeight)
 
-    private fun sendTouchCommand(json: String) {
-        try {
-            if (dataChannel?.state() != DataChannel.State.OPEN) {
-                Log.w(TAG, "DataChannel 未开启，跳过触控指令")
-                return
-            }
-            val buffer = DataChannel.Buffer(
-                java.nio.ByteBuffer.wrap(json.toByteArray(Charsets.UTF_8)),
-                false
-            )
-            dataChannel?.send(buffer)
-        } catch (e: Exception) {
-            Log.e(TAG, "发送触控指令失败: ${e.message}")
-        }
-    }
-
-    // ==================== 信令 ====================
-
-    private fun startSignalingPoll() {
-        isPolling = true
-        signalingJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive && isPolling) {
-                pollSignals()
-                delay(1000) // 每1秒轮询
-            }
-        }
-    }
-
-    private suspend fun pollSignals() {
-        try {
-            val url = URL(SIGNAL_URL)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.doOutput = true
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-
-            val body = JSONObject().apply {
-                put("action", "poll_signal")
-                put("userId", userId)
-            }
-            conn.outputStream.write(body.toString().toByteArray())
-
-            val response = conn.inputStream.bufferedReader().readText()
-            val json = JSONObject(response)
-            val signals = json.optJSONArray("signals") ?: return
-
-            for (i in 0 until signals.length()) {
-                val signal = signals.getJSONObject(i)
-                val type = signal.optString("type")
-
-                when (type) {
-                    "offer" -> {
-                        val sdp = signal.optString("sdp")
-                        if (sdp.isNotEmpty()) handleOffer(sdp)
-                    }
-                    "ice_candidate" -> {
-                        val candidate = signal.optJSONObject("candidate")
-                        if (candidate != null) handleIceCandidate(candidate)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // 轮询失败下次重试
-        }
-    }
-
-    private fun sendSignal(data: Map<String, Any>) {
+    private fun sendTouchSignal(action: String, params: Map<String, Any>) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val url = URL(SIGNAL_URL)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
-
-                val body = JSONObject().apply {
+                val signalData = mutableMapOf<String, Any>("type" to "touch", "touchAction" to action)
+                signalData.putAll(params)
+                httpPost(JSONObject().apply {
                     put("action", "signal")
                     put("from", userId)
                     put("to", elderId)
-                    put("signal", JSONObject(data as Map<*, *>))
-                }
-                conn.outputStream.write(body.toString().toByteArray())
-                conn.inputStream.close()
+                    put("signal", JSONObject(signalData as Map<*, *>))
+                })
             } catch (e: Exception) {
-                Log.e(TAG, "发送信令失败: ${e.message}")
+                Log.e(TAG, "发送触控失败: ${e.message}")
             }
-        }
-    }
-
-    private fun handleOffer(sdp: String) {
-        val sessionDescription = SessionDescription(SessionDescription.Type.OFFER, sdp)
-        peerConnection?.setRemoteDescription(object : SdpObserver {
-            override fun onSetSuccess() {
-                createAnswer()
-            }
-            override fun onSetFailure(error: String) {
-                Log.e(TAG, "setRemoteDescription 失败: $error")
-            }
-            override fun onCreateSuccess(p0: SessionDescription?) = Unit
-            override fun onCreateFailure(p0: String?) = Unit
-        }, sessionDescription)
-    }
-
-    private fun createAnswer() {
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-        }
-
-        peerConnection?.createAnswer(object : SdpObserver {
-            override fun onCreateSuccess(sessionDescription: SessionDescription) {
-                peerConnection?.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() {
-                        sendSignal(mapOf(
-                            "type" to "answer",
-                            "sdp" to sessionDescription.description
-                        ))
-                    }
-                    override fun onSetFailure(error: String) {
-                        Log.e(TAG, "setLocalDescription 失败: $error")
-                    }
-                    override fun onCreateSuccess(p0: SessionDescription?) = Unit
-                    override fun onCreateFailure(p0: String?) = Unit
-                }, sessionDescription)
-            }
-            override fun onSetSuccess() = Unit
-            override fun onCreateFailure(error: String) {
-                Log.e(TAG, "createAnswer 失败: $error")
-            }
-            override fun onSetFailure(p0: String?) = Unit
-        }, constraints)
-    }
-
-    private fun handleIceCandidate(candidate: JSONObject) {
-        val sdp = candidate.optString("sdp", "")
-        val sdpMid = candidate.optString("sdpMid", "")
-        val sdpMLineIndex = candidate.optInt("sdpMLineIndex", 0)
-        if (sdp.isNotEmpty()) {
-            peerConnection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, sdp))
         }
     }
 
@@ -586,54 +258,55 @@ class RemoteAssistManager(private val context: Context) {
 
     fun endAssist() {
         updateState(State.DISCONNECTED, null)
-
-        // 发送结束信令
-        sendSignal(mapOf("type" to "end_session"))
-
-        // 通知云端
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val url = URL(SIGNAL_URL)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
-
-                val body = JSONObject().apply {
+                // 通知老人结束
+                httpPost(JSONObject().apply {
+                    put("action", "signal")
+                    put("from", userId)
+                    put("to", elderId)
+                    put("signal", JSONObject(mapOf("type" to "end_session")))
+                })
+                // 通知云端结束
+                httpPost(JSONObject().apply {
                     put("action", "end")
                     put("userId", userId)
-                }
-                conn.outputStream.write(body.toString().toByteArray())
-                conn.inputStream.close()
-            } catch (e: Exception) {
-                Log.e(TAG, "结束通知异常: ${e.message}")
-            }
+                })
+            } catch (_: Exception) {}
         }
-
         stopPolling()
-        dispose()
     }
 
     fun stopPolling() {
-        isPolling = false
-        signalingJob?.cancel()
-        signalingJob = null
+        statusPollJob?.cancel()
+        statusPollJob = null
+        framePollJob?.cancel()
+        framePollJob = null
     }
 
     fun dispose() {
         stopPolling()
-        dataChannel?.close()
-        dataChannel = null
-        remoteVideoTrack?.dispose()
-        remoteVideoTrack = null
-        remoteAudioTrack?.dispose()
-        remoteAudioTrack = null
-        peerConnection?.close()
-        peerConnection = null
         currentState = State.IDLE
         Log.i(TAG, "资源已释放")
+    }
+
+    // ==================== 工具 ====================
+
+    private suspend fun httpPost(body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        val url = URL(SIGNAL_URL)
+        val conn = url.openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.doOutput = true
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
+            val response = conn.inputStream.bufferedReader().readText()
+            JSONObject(response)
+        } finally {
+            conn.disconnect()
+        }
     }
 
     private fun updateState(state: State, message: String?) {

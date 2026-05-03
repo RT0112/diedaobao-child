@@ -145,10 +145,12 @@
             android:layout_weight="1"
             android:background="#000000">
 
-            <org.webrtc.SurfaceViewRenderer
-                android:id="@+id/video_renderer"
+            <ImageView
+                android:id="@+id/iv_screen"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+                android:layout_height="match_parent"
+                android:scaleType="fitCenter"
+                android:contentDescription="老人屏幕画面" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -165,17 +167,16 @@
         <!-- 底部工具栏 -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="56dp"
+            android:layout_height="48dp"
             android:background="@android:color/white"
             android:gravity="center"
             android:orientation="horizontal"
-            android:paddingHorizontal="8dp"
             android:elevation="8dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="🎤 语音通话中"
+                android:text="💡 点击画面远程操作老人手机"
                 android:textSize="13sp"
                 android:textColor="#757575" />
         </LinearLayout>
