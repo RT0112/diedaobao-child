@@ -58,7 +58,7 @@ class RemoteAssistFragment : Fragment() {
         ivScreen.scaleType = ImageView.ScaleType.FIT_CENTER
 
         manager = RemoteAssistManager(requireContext())
-        val prefs = requireContext().getSharedPreferences("cloudbase_prefs", android.content.Context.MODE_PRIVATE)
+        val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
         val uid = prefs.getString("user_id", null) ?: ""
         manager.initialize(uid, CloudBaseClient.getElderId() ?: "")
 
@@ -130,7 +130,7 @@ class RemoteAssistFragment : Fragment() {
 
     private fun onStartClicked() {
         val guardianName = CloudBaseClient.getUserName().ifEmpty { "家属" }
-        val prefs = requireContext().getSharedPreferences("cloudbase_prefs", android.content.Context.MODE_PRIVATE)
+        val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
         val uid = prefs.getString("user_id", null)
         val eid = CloudBaseClient.getElderId()
 

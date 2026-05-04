@@ -25,7 +25,7 @@ object CloudBaseClient {
     private const val ENV_ID = "diedaobao-cdn-d4g496tvv296f0ac2"
     private const val BASE_URL = "https://$ENV_ID-1409685971.ap-shanghai.app.tcloudbase.com"
     
-    private const val PREFS_NAME = "cloudbase_prefs"
+    private const val PREFS_NAME = "cloudbase"
     private const val KEY_USER_ID = "user_id"
     private const val KEY_ELDER_ID = "elder_id"
     private const val KEY_USER_NAME = "user_name"
