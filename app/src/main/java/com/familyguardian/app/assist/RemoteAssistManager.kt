@@ -53,6 +53,7 @@ class RemoteAssistManager(private val context: Context) {
         userId = guardianUserId
         elderId = boundElderId
         Log.i(TAG, "初始化: userId=$userId, elderId=$elderId")
+        AppLogger.i(TAG, "[诊断] 子女端初始化: userId=$userId, elderId=$elderId")
     }
 
     // ==================== 发起协助 ====================
@@ -202,6 +203,7 @@ class RemoteAssistManager(private val context: Context) {
 
                         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         if (bitmap != null) {
+                            AppLogger.i(TAG, "[帧接收成功] #${lastFrameNum} ${bytes.size/1024}KB w=${w}h=${h}")
                             decodeFailCount = 0
                             if (currentState != State.STREAMING) {
                                 elderScreenWidth = w
@@ -213,7 +215,7 @@ class RemoteAssistManager(private val context: Context) {
                             }
                         } else {
                             decodeFailCount++
-                            AppLogger.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, decodeFailCount=$decodeFailCount")
+                            AppLogger.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, b64Len=${b64.length}, decodeFailCount=$decodeFailCount")
                             if (decodeFailCount >= 3) {
                                 updateState(State.ERROR, "画面数据异常，请重新发起协助")
                                 return@launch
@@ -224,6 +226,7 @@ class RemoteAssistManager(private val context: Context) {
                         val msg = json.optString("message", "")
                         val targetId = json.optString("targetId", "")
                         val bufSize = json.optInt("bufferSize", -1)
+                        AppLogger.i(TAG, "[帧拉取] 无新帧 emptyCount=$emptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
                         Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
 
                         // 等待中显示为 CONNECTING，每30次(~7.5s)刷新提示
