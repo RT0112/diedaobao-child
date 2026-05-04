@@ -1,5 +1,6 @@
 package com.familyguardian.app.ui
 
+import com.familyguardian.app.util.AppLogger
 import android.os.Bundle
 import android.util.Log
 import android.webkit.WebView
@@ -90,7 +91,7 @@ class MapActivity : AppCompatActivity() {
 
             webViewClient = object : WebViewClient() {
                 override fun onReceivedError(view: WebView?, code: Int, desc: String?, url: String?) {
-                    Log.e(TAG, "WebView错误: code=$code, desc=$desc")
+                    AppLogger.e(TAG, "WebView错误: code=$code, desc=$desc")
                     webView.loadDataWithBaseURL("about:blank", "<h2 style='padding:40px;text-align:center;color:#666'>地图加载失败<br><small>请检查网络连接</small></h2>", "text/html", "UTF-8", null)
                 }
                 override fun onPageFinished(view: WebView?, url: String?) {
@@ -385,7 +386,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                         }
                     }
                 }
-                Log.w(TAG, "位置拉取超时(>30s)，显示最近位置")
+                AppLogger.w(TAG, "位置拉取超时(>30s)，显示最近位置")
                 evalJs("hideLoading()")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_SHORT).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")

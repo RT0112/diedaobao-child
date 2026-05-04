@@ -1,5 +1,6 @@
 package com.familyguardian.app
 
+import com.familyguardian.app.util.AppLogger
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -32,13 +33,13 @@ class MainActivity : AppCompatActivity() {
                 append("\n--- StackTrace ---\n")
                 append(sw.toString())
             }
-            Log.e("CrashHandler", crashMsg)
+            AppLogger.e("CrashHandler", crashMsg)
             try {
                 val crashFile = File(filesDir, "crash_log.txt")
                 crashFile.writeText(crashMsg)
                 Log.i("CrashHandler", "Crash log written to ${crashFile.absolutePath}")
             } catch (e: Exception) {
-                Log.e("CrashHandler", "Failed to write crash log", e)
+                AppLogger.e("CrashHandler", "Failed to write crash log", e)
             }
             // 重启App回到首页
             val intent = packageManager.getLaunchIntentForPackage(packageName)

@@ -1,5 +1,6 @@
 package com.familyguardian.app.cloud
 
+import com.familyguardian.app.util.AppLogger
 import android.content.Context
 import android.content.SharedPreferences
 import android.provider.Settings
@@ -54,6 +55,7 @@ object CloudBaseClient {
     fun isRegistered(): Boolean = userId != null
     fun hasBoundElder(): Boolean = elderId != null
     fun getElderId(): String? = elderId
+    fun getUserId(): String? = userId
     fun getUserName(): String = prefs.getString(KEY_USER_NAME, "") ?: ""
     fun getElderName(): String = prefs.getString(KEY_ELDER_NAME, "老人") ?: "老人"
     fun getElderPhone(): String = prefs.getString(KEY_ELDER_PHONE, "") ?: ""
@@ -90,7 +92,7 @@ object CloudBaseClient {
                 
                 val response = client.newCall(request).execute()
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "autoRegister failed: ${response.code}")
+                    AppLogger.e(TAG, "autoRegister failed: ${response.code}")
                     return@withContext false
                 }
                 
@@ -104,11 +106,11 @@ object CloudBaseClient {
                     Log.i(TAG, "Guardian registered: $newUserId")
                     true
                 } else {
-                    Log.e(TAG, "autoRegister: no userId in response")
+                    AppLogger.e(TAG, "autoRegister: no userId in response")
                     false
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "autoRegister error", e)
+                AppLogger.e(TAG, "autoRegister error", e)
                 false
             }
         }
@@ -156,7 +158,7 @@ object CloudBaseClient {
                     BindResult(false, msg)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "bindElder error", e)
+                AppLogger.e(TAG, "bindElder error", e)
                 BindResult(false, "网络异常：${e.message}")
             }
         }
@@ -189,7 +191,7 @@ object CloudBaseClient {
                 
                 val response = client.newCall(request).execute()
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "requestElderLocation failed: ${response.code}")
+                    AppLogger.e(TAG, "requestElderLocation failed: ${response.code}")
                     return@withContext null
                 }
                 
@@ -197,13 +199,13 @@ object CloudBaseClient {
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
                 val success = json.get("success")?.asBoolean ?: false
                 if (!success) {
-                    Log.w(TAG, "requestElderLocation: ${json.get("message")?.asString}")
+                    AppLogger.w(TAG, "requestElderLocation: ${json.get("message")?.asString}")
                     return@withContext null
                 }
                 
                 json.get("requestTime")?.asLong
             } catch (e: Exception) {
-                Log.e(TAG, "requestElderLocation error", e)
+                AppLogger.e(TAG, "requestElderLocation error", e)
                 null
             }
         }
@@ -228,13 +230,13 @@ object CloudBaseClient {
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
                 val code = json.get("code")?.asInt ?: 0
                 if (code != 200) {
-                    Log.w(TAG, "getElderStatus error code=$code: ${json.get("message")?.asString}")
+                    AppLogger.w(TAG, "getElderStatus error code=$code: ${json.get("message")?.asString}")
                     return@withContext null
                 }
                 
                 gson.fromJson(json, ElderStatus::class.java)
             } catch (e: Exception) {
-                Log.e(TAG, "getElderStatus error", e)
+                AppLogger.e(TAG, "getElderStatus error", e)
                 null
             }
         }
@@ -257,7 +259,7 @@ object CloudBaseClient {
                 val events = json.getAsJsonArray("events")
                 events.map { gson.fromJson(it, FallEvent::class.java) }
             } catch (e: Exception) {
-                Log.e(TAG, "getFallHistory error", e)
+                AppLogger.e(TAG, "getFallHistory error", e)
                 emptyList()
             }
         }
@@ -285,14 +287,14 @@ object CloudBaseClient {
                     .build()
                 val response = client.newCall(request).execute()
                 if (!response.isSuccessful) {
-                    Log.e(TAG, "getGeofences failed: ${response.code}")
+                    AppLogger.e(TAG, "getGeofences failed: ${response.code}")
                     return@withContext getCachedGeofences()
                 }
                 
                 val responseBody = response.body?.string()
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
                 if (json.get("success")?.asBoolean != true) {
-                    Log.e(TAG, "getGeofences server error: ${json.get("message")?.asString}")
+                    AppLogger.e(TAG, "getGeofences server error: ${json.get("message")?.asString}")
                     return@withContext getCachedGeofences()
                 }
                 val fencesArray = json.getAsJsonArray("fences")
@@ -315,7 +317,7 @@ object CloudBaseClient {
                             createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
                         )
                     } catch (e: Exception) {
-                        Log.e(TAG, "Failed to parse fence: ${e.message}")
+                        AppLogger.e(TAG, "Failed to parse fence: ${e.message}")
                         null
                     }
                 }
@@ -323,7 +325,7 @@ object CloudBaseClient {
                 cacheGeofences(fences)
                 fences
             } catch (e: Exception) {
-                Log.e(TAG, "getGeofences error", e)
+                AppLogger.e(TAG, "getGeofences error", e)
                 getCachedGeofences()
             }
         }
@@ -337,7 +339,7 @@ object CloudBaseClient {
             try {
                 val eid = elderId
                 if (eid == null) {
-                    Log.e(TAG, "addGeofence: elderId is null, not bound")
+                    AppLogger.e(TAG, "addGeofence: elderId is null, not bound")
                     return@withContext "请先绑定老人设备"
                 }
                 
@@ -373,7 +375,7 @@ object CloudBaseClient {
                 
                 ""
             } catch (e: Exception) {
-                Log.e(TAG, "addGeofence error", e)
+                AppLogger.e(TAG, "addGeofence error", e)
                 "网络异常：${e.message}"
             }
         }
@@ -417,7 +419,7 @@ object CloudBaseClient {
                 
                 ""
             } catch (e: Exception) {
-                Log.e(TAG, "updateGeofence error", e)
+                AppLogger.e(TAG, "updateGeofence error", e)
                 "网络异常：${e.message}"
             }
         }
@@ -445,7 +447,7 @@ object CloudBaseClient {
                 Log.i(TAG, "deleteGeofence: $success")
                 success
             } catch (e: Exception) {
-                Log.e(TAG, "deleteGeofence error", e)
+                AppLogger.e(TAG, "deleteGeofence error", e)
                 false
             }
         }
@@ -463,7 +465,7 @@ object CloudBaseClient {
             // 过滤掉无效数据
             fences.filter { it.id.isNotBlank() && it.name.isNotBlank() }
         } catch (e: Exception) {
-            Log.e(TAG, "getCachedGeofences error, clearing cache", e)
+            AppLogger.e(TAG, "getCachedGeofences error, clearing cache", e)
             clearGeofenceCache()
             emptyList()
         }

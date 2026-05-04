@@ -5,6 +5,7 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import com.familyguardian.app.cloud.CloudBaseClient
+import com.familyguardian.app.util.AppLogger
 import java.io.PrintWriter
 import java.io.StringWriter
 
@@ -28,8 +29,8 @@ class FamilyGuardianApp : Application() {
             throwable.printStackTrace(PrintWriter(sw))
             val stack = sw.toString()
             
-            // 1. 写 LogCat
-            Log.e("CRASH", stack)
+            // 1. 写 LogCat + 云端上传
+            AppLogger.e("CRASH", stack)
             
             // 2. 写崩溃日志文件（SD卡）
             try {
@@ -39,7 +40,7 @@ class FamilyGuardianApp : Application() {
                 java.io.FileWriter(logPath, true).use { fw -> fw.append(logEntry) }
                 Log.i("CRASH", "Saved to: $logPath")
             } catch (e: Exception) {
-                Log.e("CRASH", "Failed to write crash log: ${e.message}")
+                AppLogger.e("CRASH", "Failed to write crash log", e)
             }
             
             // Toast 显示简要错误（API 33+ 发通知）
@@ -70,6 +71,7 @@ class FamilyGuardianApp : Application() {
         }
         
         CloudBaseClient.init(this)
-        Log.i("FamilyGuardianApp", "onCreate done, SDK=${Build.VERSION.SDK_INT}")
+        AppLogger.init(this, CloudBaseClient.getUserId() ?: "guardian_${Build.SERIAL}")
+        AppLogger.i("FamilyGuardianApp", "onCreate done, SDK=${Build.VERSION.SDK_INT}")
     }
 }

@@ -1,5 +1,6 @@
 package com.familyguardian.app.assist
 
+import com.familyguardian.app.util.AppLogger
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -84,7 +85,7 @@ class RemoteAssistManager(private val context: Context) {
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "发起请求异常: ${e.message}")
+                AppLogger.e(TAG, "发起请求异常: ${e.message}")
                 updateState(State.ERROR, "网络异常: ${e.message}")
             }
         }
@@ -180,7 +181,7 @@ class RemoteAssistManager(private val context: Context) {
                         emptyCount = 0
                         val frame = json.optJSONObject("frame")
                         if (frame == null) {
-                            Log.w(TAG, "poll_frame: frame字段缺失")
+                            AppLogger.w(TAG, "poll_frame: frame字段缺失")
                             continue
                         }
                         val b64 = frame.optString("data", "")
@@ -189,13 +190,13 @@ class RemoteAssistManager(private val context: Context) {
                         lastFrameNum = json.optInt("frameNum", lastFrameNum)
 
                         if (b64.isEmpty()) {
-                            Log.w(TAG, "poll_frame: data字段为空")
+                            AppLogger.w(TAG, "poll_frame: data字段为空")
                             continue
                         }
 
                         val bytes = Base64.decode(b64, Base64.DEFAULT)
                         if (bytes.isEmpty()) {
-                            Log.w(TAG, "poll_frame: Base64解码后为空")
+                            AppLogger.w(TAG, "poll_frame: Base64解码后为空")
                             continue
                         }
 
@@ -212,7 +213,7 @@ class RemoteAssistManager(private val context: Context) {
                             }
                         } else {
                             decodeFailCount++
-                            Log.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, decodeFailCount=$decodeFailCount")
+                            AppLogger.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, decodeFailCount=$decodeFailCount")
                             if (decodeFailCount >= 3) {
                                 updateState(State.ERROR, "画面数据异常，请重新发起协助")
                                 return@launch
@@ -239,7 +240,7 @@ class RemoteAssistManager(private val context: Context) {
                         return@launch
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "帧拉取异常: ${e.message}")
+                    AppLogger.e(TAG, "帧拉取异常: ${e.message}")
                 }
                 delay(FRAME_POLL_MS)
             }
@@ -274,7 +275,7 @@ class RemoteAssistManager(private val context: Context) {
                     put("signal", JSONObject(signalData as Map<*, *>))
                 })
             } catch (e: Exception) {
-                Log.e(TAG, "发送触控失败: ${e.message}")
+                AppLogger.e(TAG, "发送触控失败: ${e.message}")
             }
         }
     }
