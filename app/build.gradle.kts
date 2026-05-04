@@ -19,8 +19,8 @@ android {
         applicationId = "com.familyguardian.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.8.0"
+        versionCode = 13
+        versionName = "0.8.1"
 
         // 多架构支持：arm64-v8a (红米/华为等主流) + armeabi-v7a (老旧设备)
         ndk {
