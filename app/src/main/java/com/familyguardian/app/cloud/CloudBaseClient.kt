@@ -73,8 +73,9 @@ object CloudBaseClient {
     suspend fun autoRegister(context: Context): Boolean {
         if (userId != null) return true
         
-        val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+        val rawDeviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
             ?: return false
+        val deviceId = "family_$rawDeviceId"  // 区分同设备双App
         
         return withContext(Dispatchers.IO) {
             try {
@@ -167,6 +168,56 @@ object CloudBaseClient {
     fun unbindElder() {
         elderId = null
         prefs.edit().remove(KEY_ELDER_ID).apply()
+    }
+
+    /**
+     * 从云端同步绑定关系，更新本地elderId
+     * 解决：老人重新注册后userId变化，子女端本地elderId过期的问题
+     */
+    suspend fun syncBindingFromCloud(): Boolean {
+        if (userId == null) return false
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = JsonObject().apply {
+                    addProperty("action", "getBindings")
+                    add("data", JsonObject().apply { addProperty("userId", userId); addProperty("role", "family") })
+                }
+
+                val request = Request.Builder()
+                    .url("$BASE_URL/bind-family")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "syncBinding: HTTP ${response.code}")
+                    return@withContext false
+                }
+
+                val responseBody = response.body?.string()
+                val json = gson.fromJson(responseBody, JsonObject::class.java)
+                val code = json.get("code")?.asInt ?: 0
+
+                if (code == 200) {
+                    val dataArray = json.getAsJsonArray("data")
+                    if (dataArray != null && dataArray.size() > 0) {
+                        val binding = dataArray[0].asJsonObject
+                        val cloudElderId = binding.get("elderId")?.asString
+                        if (cloudElderId != null && cloudElderId != elderId) {
+                            elderId = cloudElderId
+                            prefs.edit().putString(KEY_ELDER_ID, cloudElderId).apply()
+                            Log.i(TAG, "syncBinding: elderId updated from cloud: $cloudElderId")
+                        }
+                        return@withContext true
+                    }
+                }
+                false
+            } catch (e: Exception) {
+                Log.e(TAG, "syncBinding error: ${e.message}")
+                false
+            }
+        }
     }
     
     // ========== 按需位置拉取 ==========

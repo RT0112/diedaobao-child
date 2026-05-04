@@ -5,9 +5,11 @@ import android.os.Bundle
 import android.view.*
 import android.widget.*
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.R
 import com.familyguardian.app.assist.RemoteAssistManager
 import com.familyguardian.app.cloud.CloudBaseClient
+import kotlinx.coroutines.launch
 
 /**
  * 远程协助 Fragment（子女端 v2 — 去掉 WebRTC，用 HTTP 帧中继）
@@ -60,7 +62,14 @@ class RemoteAssistFragment : Fragment() {
         manager = RemoteAssistManager(requireContext())
         val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
         val uid = prefs.getString("user_id", null) ?: ""
-        manager.initialize(uid, CloudBaseClient.getElderId() ?: "")
+
+        // 从云端同步绑定关系（解决老人重新注册后userId变化的问题）
+        viewLifecycleOwner.lifecycleScope.launch {
+            val synced = CloudBaseClient.syncBindingFromCloud()
+            val eid = CloudBaseClient.getElderId() ?: ""
+            manager.initialize(uid, eid)
+            android.util.Log.i("RemoteAssistFragment", "[诊断]同步绑定: $synced, userId=$uid, elderId=$eid")
+        }
 
         manager.onStateChange = { state, msg ->
             activity?.runOnUiThread {
@@ -133,6 +142,10 @@ class RemoteAssistFragment : Fragment() {
         val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
         val uid = prefs.getString("user_id", null)
         val eid = CloudBaseClient.getElderId()
+
+        //诊断：显示实际userId和elderId
+        android.util.Log.i("RemoteAssistFragment", "[诊断]子女userId=$uid elderId=$eid")
+        Toast.makeText(requireContext(), "子女:$uid\n老人:$eid", Toast.LENGTH_LONG).show()
 
         if (uid == null || eid == null) {
             Toast.makeText(requireContext(), "请先绑定老人设备", Toast.LENGTH_SHORT).show()
