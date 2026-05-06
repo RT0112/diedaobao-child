@@ -353,7 +353,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                 }
 
                 // 2. 请求老人实时位置（持续loading直到成功或失败）
-                evalJs("showLoading('📡 正在获取实时位置...')")
+                // 使用全屏覆盖层（和成功/失败弹窗一样的持久显示），不是短暂Toast
+                evalJs("document.getElementById('info-panel').style.display='none';document.getElementById('loading').textContent='📡 正在获取实时位置...';document.getElementById('loading').style.display='block'")
 
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {
