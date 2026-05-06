@@ -130,7 +130,10 @@ class RemoteAssistManager(private val context: Context) {
 
                     when (json.optString("status", "idle")) {
                         "active" -> {
-                            statusPollJob?.cancel()
+                            // ⚠️ 不要调 statusPollJob?.cancel()！
+                            // cancel() 会取消当前协程，导致 delay(500) 抛 CancellationException，
+                            // startFramePolling() 永远不会被调用。
+                            // return@launch 已经足够退出 while 循环。
                             updateState(State.ACCEPTED, "老人已接受")
                             delay(500)
                             startFramePolling()
@@ -145,7 +148,9 @@ class RemoteAssistManager(private val context: Context) {
                             return@launch
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "check_status 轮询异常: ${e.message}")
+                }
                 delay(STATUS_POLL_MS)
             }
         }
@@ -299,7 +304,7 @@ class RemoteAssistManager(private val context: Context) {
                 // 通知云端结束
                 httpPost(JSONObject().apply {
                     put("action", "end")
-                    put("userId", userId)
+                    put("elderId", elderId)
                 })
             } catch (_: Exception) {}
         }
@@ -328,11 +333,14 @@ class RemoteAssistManager(private val context: Context) {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.doOutput = true
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
+            conn.connectTimeout = 10000
+            conn.readTimeout = 15000
             conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
             val response = conn.inputStream.bufferedReader().readText()
             JSONObject(response)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "httpPost 失败: ${e.message}, url=$SIGNAL_URL, action=${body.optString("action","?")}")
+            throw e  // 不吞异常，让调用方处理
         } finally {
             conn.disconnect()
         }

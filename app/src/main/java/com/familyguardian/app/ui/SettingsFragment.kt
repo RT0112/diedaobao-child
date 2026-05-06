@@ -34,7 +34,7 @@ class SettingsFragment : Fragment() {
         b.btnPermissionSettings.setOnClickListener { openPermissionSettings() }
         
         // 解绑按钮
-        b.btnUnbind.setOnClickListener { showUnbindConfirm() }
+        b.btnUnbind.setOnClickListener { showResetConfirm() }
         
         // 关于按钮
         b.btnAbout.setOnClickListener { showAbout() }
@@ -63,14 +63,13 @@ class SettingsFragment : Fragment() {
         }
     }
     
-    private fun showUnbindConfirm() {
+    private fun showResetConfirm() {
         AlertDialog.Builder(requireContext())
-            .setTitle("确认解绑")
-            .setMessage("解绑后将无法接收老人的跌倒报警，确定要解绑吗？")
-            .setPositiveButton("解绑") { _, _ ->
-                CloudBaseClient.unbindElder()
-                Toast.makeText(requireContext(), "已解绑", Toast.LENGTH_SHORT).show()
-                updateBindingStatus()
+            .setTitle("重置账号")
+            .setMessage("将清除本地账号信息，重新注册。\n\n⚠️ 重新注册后会生成新的 userId（带正确前缀），需要重新绑定老人。")
+            .setPositiveButton("重置") { _, _ ->
+                CloudBaseClient.resetRegistration()
+                Toast.makeText(requireContext(), "已重置，请重启App", Toast.LENGTH_LONG).show()
             }
             .setNegativeButton("取消", null)
             .show()

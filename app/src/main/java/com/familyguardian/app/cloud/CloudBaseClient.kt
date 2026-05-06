@@ -28,6 +28,7 @@ object CloudBaseClient {
     private const val PREFS_NAME = "cloudbase"
     private const val KEY_USER_ID = "user_id"
     private const val KEY_ELDER_ID = "elder_id"
+    private const val KEY_FAMILY_ID = "family_id"
     private const val KEY_USER_NAME = "user_name"
     private const val KEY_USER_PHONE = "user_phone"
     private const val KEY_ELDER_NAME = "elder_name"
@@ -148,7 +149,10 @@ object CloudBaseClient {
                     if (newElderId != null) {
                         elderId = newElderId
                         prefs.edit().putString(KEY_ELDER_ID, newElderId).apply()
-                        Log.i(TAG, "Elder bound: $newElderId")
+                        // 同步保存老人姓名
+                        val name = json.get("elderName")?.asString
+                        if (name != null) saveElderInfo(name, null)
+                        Log.i(TAG, "Elder bound: $newElderId, name=$name")
                         BindResult(true, "绑定成功")
                     } else {
                         val msg = json.get("message")?.asString ?: "绑定成功"
@@ -168,6 +172,21 @@ object CloudBaseClient {
     fun unbindElder() {
         elderId = null
         prefs.edit().remove(KEY_ELDER_ID).apply()
+    }
+
+    /**
+     * 强制重置注册状态，清除本地userId，下次启动会重新注册（带正确deviceId前缀）
+     * 用途：解决SharedPreferences残留旧userId导致无法重新注册的问题
+     */
+    fun resetRegistration() {
+        userId = null
+        elderId = null
+        prefs.edit()
+            .remove(KEY_USER_ID)
+            .remove(KEY_ELDER_ID)
+            .remove(KEY_FAMILY_ID)
+            .apply()
+        Log.i(TAG, "Registration reset, will re-register on next launch")
     }
 
     /**
@@ -202,12 +221,44 @@ object CloudBaseClient {
                 if (code == 200) {
                     val dataArray = json.getAsJsonArray("data")
                     if (dataArray != null && dataArray.size() > 0) {
-                        val binding = dataArray[0].asJsonObject
-                        val cloudElderId = binding.get("elderId")?.asString
-                        if (cloudElderId != null && cloudElderId != elderId) {
+                        // 遍历所有绑定记录，找到最新的且status=active的
+                        var bestBinding: com.google.gson.JsonObject? = null
+                        var bestTime = 0L
+                        
+                        for (i in 0 until dataArray.size()) {
+                            val binding = dataArray[i].asJsonObject
+                            val status = binding.get("status")?.asString ?: ""
+                            if (status != "active") continue
+                            
+                            val createdAt = binding.get("createdAt")?.asString ?: ""
+                            val time = try {
+                                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+                                    .parse(createdAt)?.time ?: 0L
+                            } catch (e: Exception) { 0L }
+                            
+                            // 优先选择与本地elderId匹配的记录，否则选最新的
+                            val bindingElderId = binding.get("elderId")?.asString
+                            if (bindingElderId == elderId) {
+                                bestBinding = binding
+                                break  // 找到匹配的，直接用这个
+                            }
+                            if (time > bestTime) {
+                                bestTime = time
+                                bestBinding = binding
+                            }
+                        }
+                        
+                        val cloudElderId = bestBinding?.get("elderId")?.asString
+                        // 修复：只在本地没有elderId时才从云端同步
+                        // 避免云端旧绑定数据覆盖本地正确的elderId
+                        if (cloudElderId != null && elderId == null) {
                             elderId = cloudElderId
                             prefs.edit().putString(KEY_ELDER_ID, cloudElderId).apply()
-                            Log.i(TAG, "syncBinding: elderId updated from cloud: $cloudElderId")
+                            Log.i(TAG, "syncBinding: elderId set from cloud: $cloudElderId")
+                        } else if (cloudElderId != null && elderId != null && cloudElderId != elderId) {
+                            // 云端elderId与本地不一致，记录日志但不覆盖
+                            Log.w(TAG, "syncBinding: cloud elderId($cloudElderId) != local($elderId), keeping local")
                         }
                         return@withContext true
                     }

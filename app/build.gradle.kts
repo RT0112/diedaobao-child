@@ -22,9 +22,9 @@ android {
         versionCode = 13
         versionName = "0.8.1"
 
-        // 多架构支持：arm64-v8a (红米/华为等主流) + armeabi-v7a (老旧设备)
+        // 多架构支持：仅 arm64-v8a (主流真机)
         ndk {
-            abiFilters.addAll(listOf("armeabi-v7a", "arm64-v8a", "x86_64"))
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -45,7 +45,7 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86_64")
+            include("arm64-v8a")
             isUniversalApk = true
         }
     }
