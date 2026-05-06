@@ -29,7 +29,7 @@ class RemoteAssistManager(private val context: Context) {
         private const val SIGNAL_URL =
             "https://diedaobao-cdn-d4g496tvv296f0ac2-1409685971.ap-shanghai.app.tcloudbase.com/remote-assist"
         private const val STATUS_POLL_MS = 2000L
-        private const val FRAME_POLL_MS = 500L   // 2fps 拉取（降低频率节省服务器资源）
+        private const val FRAME_POLL_MS = 300L   // 帧轮询间隔（独立集合后服务端<1s响应）
         private const val REQUEST_TIMEOUT_MS = 60_000L
     }
 
