@@ -352,8 +352,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     }
                 }
 
-                // 2. 请求老人实时位置（延长弹窗提示）
-                runOnUiThread { Toast.makeText(this@MapActivity, "📡 正在获取实时位置...", Toast.LENGTH_LONG).show() }
+                // 2. 请求老人实时位置（持续loading直到成功或失败）
+                evalJs("showLoading('📡 正在获取实时位置...')")
 
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {
@@ -362,12 +362,15 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     return@launch
                 }
 
-                // 3. 轮询等待老人上传新位置（最多30秒）
-                // 老人端：每3秒轮询(最多3s延迟) + GPS单次定位(最多15s) = 最坏18s
-                // 留足余量：30s
+                // 3. 轮询等待老人上传新位置（最多45秒）
+                // 老人端：每5秒轮询(最多5s延迟) + GPS单次定位(最多15s) = 最坏20s
+                // 留足余量：45s，轮询间隔缩短到800ms加速响应
                 val startWait = System.currentTimeMillis()
-                while (System.currentTimeMillis() - startWait < 30_000) {
-                    kotlinx.coroutines.delay(1500)
+                var lastStatus: String? = null
+                var pollCount = 0
+                while (System.currentTimeMillis() - startWait < 45_000) {
+                    kotlinx.coroutines.delay(800)
+                    pollCount++
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
                         val loc = fresh.lastLocation
@@ -379,8 +382,16 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                             return@launch
                         }
                         if (fresh.pullLocationStatus == "pending") {
-                            evalJs("document.getElementById('time')?.textContent='等待老人设备响应...'")
+                            if (lastStatus != "pending") {
+                                evalJs("showLoading('等待老人设备响应...')")
+                                lastStatus = "pending"
+                            }
                         }
+                    }
+                    // 每隔5秒更新进度提示
+                    if (pollCount % 6 == 0) {
+                        val elapsed = (System.currentTimeMillis() - startWait) / 1000
+                        evalJs("showLoading('📡 正在获取实时位置...(${elapsed}s)')")
                     }
                 }
                 AppLogger.w(TAG, "位置拉取超时(>30s)，显示最近位置")
