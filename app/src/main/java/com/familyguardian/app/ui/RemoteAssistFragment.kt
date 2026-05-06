@@ -177,11 +177,30 @@ class RemoteAssistFragment : Fragment() {
         val viewH = ivScreen.height
         if (viewW <= 0 || viewH <= 0) return
 
-        // 坐标换算：ImageView 坐标 → 老人端屏幕坐标
-        val scaleX = elderScreenW.toFloat() / viewW
-        val scaleY = elderScreenH.toFloat() / viewH
-        val elderX = event.x * scaleX
-        val elderY = event.y * scaleY
+        // FIT_CENTER 缩放模式：计算实际显示区域（考虑 letterbox/pillarbox 黑边）
+        // 实际显示的 bitmap 尺寸
+        val drawable = ivScreen.drawable ?: return
+        val bmpW = drawable.intrinsicWidth.toFloat()
+        val bmpH = drawable.intrinsicHeight.toFloat()
+        if (bmpW <= 0 || bmpH <= 0) return
+
+        // FIT_CENTER 缩放因子
+        val scale = minOf(viewW / bmpW, viewH / bmpH)
+        // 实际显示区域在 ImageView 中的偏移（letterbox/pillarbox 黑边）
+        val displayW = bmpW * scale
+        val displayH = bmpH * scale
+        val offsetX = (viewW - displayW) / 2
+        val offsetY = (viewH - displayH) / 2
+
+        // ImageView 坐标 → bitmap 坐标（减去黑边偏移 + 除以缩放因子）
+        val bmpX = (event.x - offsetX) / scale
+        val bmpY = (event.y - offsetY) / scale
+
+        // bitmap 坐标 → 老人真实屏幕坐标（bitmap 是缩小版的屏幕截图）
+        val scaleX = elderScreenW.toFloat() / bmpW
+        val scaleY = elderScreenH.toFloat() / bmpH
+        val elderX = bmpX * scaleX
+        val elderY = bmpY * scaleY
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {

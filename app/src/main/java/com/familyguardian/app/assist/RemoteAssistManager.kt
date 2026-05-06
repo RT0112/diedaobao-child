@@ -134,6 +134,14 @@ class RemoteAssistManager(private val context: Context) {
                             // cancel() 会取消当前协程，导致 delay(500) 抛 CancellationException，
                             // startFramePolling() 永远不会被调用。
                             // return@launch 已经足够退出 while 循环。
+                            // 保存老人真实屏幕分辨率（用于触控坐标映射）
+                            val realW = json.optInt("screenWidth", 720)
+                            val realH = json.optInt("screenHeight", 1280)
+                            if (realW > 0 && realH > 0) {
+                                elderScreenWidth = realW
+                                elderScreenHeight = realH
+                                Log.i(TAG, "老人真实屏幕分辨率: ${realW}x${realH}")
+                            }
                             updateState(State.ACCEPTED, "老人已接受")
                             delay(500)
                             startFramePolling()
@@ -211,8 +219,8 @@ class RemoteAssistManager(private val context: Context) {
                             AppLogger.i(TAG, "[帧接收成功] #${lastFrameNum} ${bytes.size/1024}KB w=${w}h=${h}")
                             decodeFailCount = 0
                             if (currentState != State.STREAMING) {
-                                elderScreenWidth = w
-                                elderScreenHeight = h
+                                // 帧的 w/h 是缩放后的分辨率（如360x640），不要用它更新触控映射
+                                // 触控映射用 check_status 返回的真实分辨率
                                 updateState(State.STREAMING, null)
                             }
                             Handler(android.os.Looper.getMainLooper()).post {
