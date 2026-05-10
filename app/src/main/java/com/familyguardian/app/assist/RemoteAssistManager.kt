@@ -59,7 +59,12 @@ class RemoteAssistManager(private val context: Context) {
     // ==================== 发起协助 ====================
 
     fun requestAssist(guardianName: String) {
-        if (currentState == State.REQUESTING || currentState == State.STREAMING) return
+        // v19.7.4: 非IDLE状态先清理旧会话
+        if (currentState != State.IDLE) {
+            AppLogger.w(TAG, "requestAssist: 当前状态=$currentState，先清理旧会话")
+            stopPolling()
+            currentState = State.IDLE
+        }
         updateState(State.REQUESTING, null)
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -182,7 +187,9 @@ class RemoteAssistManager(private val context: Context) {
 
         framePollJob = CoroutineScope(Dispatchers.IO).launch {
             var emptyCount = 0
+            var totalEmptyCount = 0  // v19.7.4: 累计空帧总数，不归零
             var decodeFailCount = 0
+            val MAX_TOTAL_EMPTY = 200  // 200 * 300ms = 60s 无帧超时
             while (isActive) {
                 try {
                     val json = httpPost(JSONObject().apply {
@@ -236,15 +243,23 @@ class RemoteAssistManager(private val context: Context) {
                         }
                     } else {
                         emptyCount++
+                        totalEmptyCount++
                         val msg = json.optString("message", "")
                         val targetId = json.optString("targetId", "")
                         val bufSize = json.optInt("bufferSize", -1)
-                        AppLogger.i(TAG, "[帧拉取] 无新帧 emptyCount=$emptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
-                        Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
+                        AppLogger.i(TAG, "[帧拉取] 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
+                        Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
+
+                        // v19.7.4: 60秒无帧超时断开
+                        if (totalEmptyCount >= MAX_TOTAL_EMPTY) {
+                            AppLogger.w(TAG, "帧拉取超时: ${totalEmptyCount}次无帧，自动断开")
+                            updateState(State.DISCONNECTED, "连接超时，老人端未上传画面")
+                            return@launch
+                        }
 
                         // 等待中显示为 CONNECTING，每30次(~7.5s)刷新提示
                         if (currentState == State.CONNECTING && emptyCount > 30) {
-                            updateState(State.CONNECTING, "等待屏幕画面...(${emptyCount}次轮询)")
+                            updateState(State.CONNECTING, "等待屏幕画面...(${totalEmptyCount}次)")
                             emptyCount = 0
                         }
                     }
