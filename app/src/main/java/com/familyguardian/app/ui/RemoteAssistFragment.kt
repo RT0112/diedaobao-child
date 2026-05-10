@@ -28,6 +28,10 @@ class RemoteAssistFragment : Fragment() {
     private lateinit var btnEnd: Button
     private lateinit var btnCancel: Button
     private lateinit var btnRetry: Button
+    private lateinit var btnNavBack: Button
+    private lateinit var btnNavHome: Button
+    private lateinit var btnNavRecents: Button
+    private lateinit var btnNavNotifications: Button
     private lateinit var tvTimer: TextView
     private lateinit var ivScreen: ImageView
 
@@ -53,6 +57,10 @@ class RemoteAssistFragment : Fragment() {
         btnEnd = view.findViewById(R.id.btn_end_assist)
         btnCancel = view.findViewById(R.id.btn_cancel_request)
         btnRetry = view.findViewById(R.id.btn_retry)
+        btnNavBack = view.findViewById(R.id.btn_nav_back)
+        btnNavHome = view.findViewById(R.id.btn_nav_home)
+        btnNavRecents = view.findViewById(R.id.btn_nav_recents)
+        btnNavNotifications = view.findViewById(R.id.btn_nav_notifications)
         tvTimer = view.findViewById(R.id.tv_timer)
         ivScreen = view.findViewById(R.id.iv_screen)
 
@@ -100,6 +108,12 @@ class RemoteAssistFragment : Fragment() {
         btnEnd.setOnClickListener { onEndClicked() }
         btnCancel.setOnClickListener { onCancelClicked() }
         btnRetry.setOnClickListener { showIdle(); onStartClicked() }
+
+        // v19.7.3: 导航按钮
+        btnNavBack.setOnClickListener { manager.sendKeyAction("back") }
+        btnNavHome.setOnClickListener { manager.sendKeyAction("home") }
+        btnNavRecents.setOnClickListener { manager.sendKeyAction("recents") }
+        btnNavNotifications.setOnClickListener { manager.sendKeyAction("notifications") }
 
         // 屏幕触摸事件
         ivScreen.setOnTouchListener { _, event -> handleTouch(event); true }

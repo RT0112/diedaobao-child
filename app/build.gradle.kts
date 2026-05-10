@@ -22,11 +22,6 @@ android {
         versionCode = 13
         versionName = "0.8.1"
 
-        // 多架构支持：仅 arm64-v8a (主流真机)
-        ndk {
-            abiFilters.addAll(listOf("arm64-v8a"))
-        }
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -40,13 +35,13 @@ android {
         }
     }
 
-    // 输出所有架构的 APK（方便不同设备安装）
+    // 仅输出 arm64-v8a 架构 APK
     splits {
         abi {
             isEnable = true
             reset()
             include("arm64-v8a")
-            isUniversalApk = true
+            isUniversalApk = false
         }
     }
 

@@ -296,6 +296,24 @@ class RemoteAssistManager(private val context: Context) {
         }
     }
 
+    // v19.7.3: 导航键指令
+    fun sendKeyAction(keyCode: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val signalData = mapOf<String, Any>("type" to "key", "keyCode" to keyCode)
+                httpPost(JSONObject().apply {
+                    put("action", "signal")
+                    put("from", userId)
+                    put("to", elderId)
+                    put("signal", JSONObject(signalData))
+                })
+                AppLogger.i(TAG, "导航键已发送: $keyCode")
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "发送导航键失败: ${e.message}")
+            }
+        }
+    }
+
     // ==================== 结束 ====================
 
     fun endAssist() {
