@@ -262,9 +262,6 @@ class RemoteAssistFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        // ⚠️ 只清理 UI 资源，不 dispose manager！
-        // 切换底部导航栏时 View 会被销毁重建，但 Fragment 对象保留
-        // dispose() 会在 onDestroy 中调用
         stopTimer()
         manager.onFrameReceived = null
         manager.onStateChange = null
@@ -272,13 +269,13 @@ class RemoteAssistFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Fragment 真正销毁时才释放 manager
         manager.dispose()
     }
 
     /**
      * 根据 manager 当前状态恢复 UI 显示
-     * 用于切换底部导航栏回来后，画面不丢失
+     * 保险逻辑：hide/show 模式下通常不需要，
+     * 但如果 View 因其他原因重建（如配置变更），可据此恢复
      */
     private fun restoreUIFromState() {
         when (manager.currentState) {
@@ -288,9 +285,6 @@ class RemoteAssistFragment : Fragment() {
             RemoteAssistManager.State.CONNECTING -> showWaiting("建立连接...")
             RemoteAssistManager.State.STREAMING -> {
                 showAssisting()
-                // STREAMING 状态下不需要重新 startTimer，
-                // 因为帧回调会持续触发 onStateChange(STREAMING)，
-                // 但 if (!timerRunning) 保护确保不重复
                 if (!timerRunning) startTimer()
             }
             RemoteAssistManager.State.DISCONNECTED -> showError("连接已断开")
