@@ -16,7 +16,12 @@ import kotlinx.coroutines.launch
  */
 class RemoteAssistFragment : Fragment() {
 
-    private lateinit var manager: RemoteAssistManager
+    // ⚠️ manager 不随 View 销毁，保持在 Fragment 生命周期内
+    // 切换底部导航栏时 onDestroyView 会杀 View 但 Fragment 对象保留
+    private val manager: RemoteAssistManager by lazy {
+        RemoteAssistManager(requireContext())
+    }
+    private var managerInitialized = false
 
     private lateinit var containerIdle: View
     private lateinit var containerWaiting: View
@@ -67,18 +72,22 @@ class RemoteAssistFragment : Fragment() {
         // 缩放型适配（保持比例）
         ivScreen.scaleType = ImageView.ScaleType.FIT_CENTER
 
-        manager = RemoteAssistManager(requireContext())
-        val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
-        val uid = prefs.getString("user_id", null) ?: ""
+        // 初始化 manager（仅首次）
+        if (!managerInitialized) {
+            val prefs = requireContext().getSharedPreferences("cloudbase", android.content.Context.MODE_PRIVATE)
+            val uid = prefs.getString("user_id", null) ?: ""
 
-        // 从云端同步绑定关系（解决老人重新注册后userId变化的问题）
-        viewLifecycleOwner.lifecycleScope.launch {
-            val synced = CloudBaseClient.syncBindingFromCloud()
-            val eid = CloudBaseClient.getElderId() ?: ""
-            manager.initialize(uid, eid)
-            android.util.Log.i("RemoteAssistFragment", "[诊断]同步绑定: $synced, userId=$uid, elderId=$eid")
+            // 从云端同步绑定关系（解决老人重新注册后userId变化的问题）
+            viewLifecycleOwner.lifecycleScope.launch {
+                val synced = CloudBaseClient.syncBindingFromCloud()
+                val eid = CloudBaseClient.getElderId() ?: ""
+                manager.initialize(uid, eid)
+                managerInitialized = true
+                android.util.Log.i("RemoteAssistFragment", "[诊断]同步绑定: $synced, userId=$uid, elderId=$eid")
+            }
         }
 
+        // 重新绑定回调（View 重建后 ivScreen 等是新的）
         manager.onStateChange = { state, msg ->
             activity?.runOnUiThread {
                 when (state) {
@@ -87,7 +96,7 @@ class RemoteAssistFragment : Fragment() {
                     RemoteAssistManager.State.ACCEPTED -> showWaiting(msg ?: "老人已接受，连接中...")
                     RemoteAssistManager.State.CONNECTING -> showWaiting(msg ?: "建立连接...")
                     RemoteAssistManager.State.STREAMING -> {
-                        startTimer()
+                        if (!timerRunning) startTimer()
                         showAssisting()
                     }
                     RemoteAssistManager.State.DISCONNECTED -> { stopTimer(); showError(msg ?: "连接已断开") }
@@ -103,6 +112,9 @@ class RemoteAssistFragment : Fragment() {
             elderScreenH = h
             ivScreen.setImageBitmap(bitmap)
         }
+
+        // 根据当前 manager 状态恢复 UI（切 tab 回来时）
+        restoreUIFromState()
 
         btnStart.setOnClickListener { onStartClicked() }
         btnEnd.setOnClickListener { onEndClicked() }
@@ -250,7 +262,41 @@ class RemoteAssistFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        // ⚠️ 只清理 UI 资源，不 dispose manager！
+        // 切换底部导航栏时 View 会被销毁重建，但 Fragment 对象保留
+        // dispose() 会在 onDestroy 中调用
         stopTimer()
+        manager.onFrameReceived = null
+        manager.onStateChange = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Fragment 真正销毁时才释放 manager
         manager.dispose()
+    }
+
+    /**
+     * 根据 manager 当前状态恢复 UI 显示
+     * 用于切换底部导航栏回来后，画面不丢失
+     */
+    private fun restoreUIFromState() {
+        when (manager.currentState) {
+            RemoteAssistManager.State.IDLE -> showIdle()
+            RemoteAssistManager.State.REQUESTING -> showWaiting("等待老人响应...")
+            RemoteAssistManager.State.ACCEPTED -> showWaiting("老人已接受，连接中...")
+            RemoteAssistManager.State.CONNECTING -> showWaiting("建立连接...")
+            RemoteAssistManager.State.STREAMING -> {
+                showAssisting()
+                // STREAMING 状态下不需要重新 startTimer，
+                // 因为帧回调会持续触发 onStateChange(STREAMING)，
+                // 但 if (!timerRunning) 保护确保不重复
+                if (!timerRunning) startTimer()
+            }
+            RemoteAssistManager.State.DISCONNECTED -> showError("连接已断开")
+            RemoteAssistManager.State.ERROR -> showError("发生错误")
+            RemoteAssistManager.State.REJECTED -> showError("老人拒绝了协助请求")
+            RemoteAssistManager.State.TIMEOUT -> showError("等待超时，老人未响应")
+        }
     }
 }

@@ -42,7 +42,8 @@ class RemoteAssistManager(private val context: Context) {
 
     private var userId: String? = null
     private var elderId: String? = null
-    private var currentState = State.IDLE
+    var currentState = State.IDLE
+        private set
     private var requestStartTime = 0L
     private var framePollJob: Job? = null
     private var lastFrameNum = 0
