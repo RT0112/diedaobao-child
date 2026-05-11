@@ -350,16 +350,36 @@ object CloudBaseClient {
         return withContext(Dispatchers.IO) {
             try {
                 val eid = elderId ?: return@withContext emptyList()
+                Log.i(TAG, "getFallHistory: elderId=$eid, limit=$limit")
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$limit"
                 
                 val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) return@withContext emptyList()
+                if (!response.isSuccessful) {
+                    AppLogger.e(TAG, "getFallHistory HTTP error: ${response.code}")
+                    return@withContext emptyList()
+                }
                 
                 val responseBody = response.body?.string()
+                Log.i(TAG, "getFallHistory response: $responseBody")
                 val json = gson.fromJson(responseBody, JsonObject::class.java)
-                val events = json.getAsJsonArray("events")
-                events.map { gson.fromJson(it, FallEvent::class.java) }
+                
+                // 检查云函数返回码
+                val code = json.get("code")?.asInt ?: 0
+                if (code != 200) {
+                    AppLogger.e(TAG, "getFallHistory server error: code=$code, msg=${json.get("message")?.asString}")
+                    return@withContext emptyList()
+                }
+                
+                val eventsArray = json.getAsJsonArray("events")
+                if (eventsArray == null) {
+                    AppLogger.w(TAG, "getFallHistory: no events array in response")
+                    return@withContext emptyList()
+                }
+                
+                val events = eventsArray.map { gson.fromJson(it, FallEvent::class.java) }
+                Log.i(TAG, "getFallHistory: got ${events.size} events for elderId=$eid")
+                events
             } catch (e: Exception) {
                 AppLogger.e(TAG, "getFallHistory error", e)
                 emptyList()

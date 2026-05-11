@@ -201,6 +201,20 @@ function hideLoading(){
   var el=document.getElementById('loading');
   if(el)el.style.display='none'
 }
+function showLocatingStatus(text){
+  var el=document.getElementById('locating-status');
+  if(!el){
+    el=document.createElement('div');
+    el.id='locating-status';
+    el.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;z-index:10000;white-space:nowrap';
+    document.body.appendChild(el)
+  }
+  el.textContent=text;el.style.display='block'
+}
+function hideLocatingStatus(){
+  var el=document.getElementById('locating-status');
+  if(el)el.style.display='none'
+}
 function handleRadiusInput(){
   if(!ctr)return;
   var r=parseInt(document.getElementById('fence-radius').value)||200;
@@ -352,51 +366,49 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     }
                 }
 
-                // 2. 请求老人实时位置（持续loading直到成功或失败）
-                // 使用全屏覆盖层（和成功/失败弹窗一样的持久显示），不是短暂Toast
-                evalJs("document.getElementById('info-panel').style.display='none';document.getElementById('loading').textContent='📡 正在获取实时位置...';document.getElementById('loading').style.display='block'")
+                // 2. 请求老人实时位置
+                // 在 WebView 中显示持续的定位状态提示
+                evalJs("showLocatingStatus('📡 正在获取实时位置...')")
 
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {
-                    evalJs("hideLoading()")
+                    evalJs("hideLocatingStatus()")
                     runOnUiThread { Toast.makeText(this@MapActivity, "❌ 无法连接到老人设备", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
-                // 3. 轮询等待老人上传新位置（最多45秒）
-                // 老人端：每5秒轮询(最多5s延迟) + GPS单次定位(最多15s) = 最坏20s
-                // 留足余量：45s，轮询间隔缩短到800ms加速响应
+                // 3. 轮询等待老人上传新位置（最多60秒）
+                // 老人端：每10秒轮询(最多10s延迟) + GPS定位(最多15s) = 最坏25s
+                // 加急3秒模式后：3s轮询 + 15s GPS = 最坏18s
+                // 留足余量：60s
                 val startWait = System.currentTimeMillis()
-                var lastStatus: String? = null
                 var pollCount = 0
-                while (System.currentTimeMillis() - startWait < 45_000) {
-                    kotlinx.coroutines.delay(800)
+                while (System.currentTimeMillis() - startWait < 60_000) {
+                    kotlinx.coroutines.delay(1000)
                     pollCount++
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
                         val loc = fresh.lastLocation
-                        // 双重检测：时间戳新于请求 或 pullLocationStatus变为done
-                        if (loc.timestamp > requestTime || fresh.pullLocationStatus == "done") {
-                            evalJs("hideLoading()")
+                        // 三重检测：
+                        // 1) 位置时间戳新于请求时间
+                        // 2) pullLocationStatus变为done（老人已上传）
+                        // 3) 轮询超过5次且状态是done（兼容时钟偏移）
+                        val locNewer = loc.timestamp > requestTime
+                        val statusDone = fresh.pullLocationStatus == "done"
+                        val probablyDone = pollCount > 5 && statusDone && (System.currentTimeMillis() - startWait > 5_000)
+                        if (locNewer || (statusDone && pollCount > 2) || probablyDone) {
+                            evalJs("hideLocatingStatus()")
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
                             return@launch
                         }
-                        if (fresh.pullLocationStatus == "pending") {
-                            if (lastStatus != "pending") {
-                                evalJs("showLoading('等待老人设备响应...')")
-                                lastStatus = "pending"
-                            }
-                        }
                     }
-                    // 每隔5秒更新进度提示
-                    if (pollCount % 6 == 0) {
-                        val elapsed = (System.currentTimeMillis() - startWait) / 1000
-                        evalJs("showLoading('📡 正在获取实时位置...(${elapsed}s)')")
-                    }
+                    // 更新定位状态（持续显示）
+                    val elapsed = (System.currentTimeMillis() - startWait) / 1000
+                    evalJs("showLocatingStatus('📡 获取位置中...(${elapsed}s)')")
                 }
-                AppLogger.w(TAG, "位置拉取超时(>30s)，显示最近位置")
-                evalJs("hideLoading()")
+                AppLogger.w(TAG, "位置拉取超时(>60s)，显示最近位置")
+                evalJs("hideLocatingStatus()")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_LONG).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
                 // 超时：保留步骤1的缓存位置
