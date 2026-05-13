@@ -1,6 +1,7 @@
 package com.familyguardian.app.ui
 
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -8,8 +9,13 @@ import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
+import com.familyguardian.app.data.AppDatabase
+import com.familyguardian.app.data.FallNotification
 import com.familyguardian.app.databinding.FragmentHomeBinding
+import com.familyguardian.app.cloud.WSClient
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -50,6 +56,9 @@ class HomeFragment : Fragment() {
         
         // 更新UI状态
         updateUI()
+
+        // v21: 连接 WS 并监听跌倒事件 + 位置更新
+        startWSListener()
     }
     
     /**
@@ -186,6 +195,9 @@ class HomeFragment : Fragment() {
                     } else {
                         b.btnViewLocation.text = "📍 查看位置"
                     }
+                    
+                    // 检测新跌倒事件 → 存本地通知
+                    checkAndSaveFallNotification(status)
                 } else {
                     b.tvElderName.text = elderName
                     b.tvStatus.text = "获取状态失败"
@@ -218,6 +230,79 @@ class HomeFragment : Fragment() {
             else -> SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
         }
     }
+
+    /**
+     * 检测到新跌倒事件时存本地并发系统通知
+     * 云端只用于传递信号，历史数据纯本地
+     */
+    private fun checkAndSaveFallNotification(status: CloudBaseClient.ElderStatus) {
+        val fallEvent = status.lastFallEvent ?: return
+        if (fallEvent.eventId.isEmpty()) return
+        
+        val db = AppDatabase.getInstance(requireContext())
+        viewLifecycleOwner.lifecycleScope.launch {
+            // 去重：已存过的事件不再重复
+            val existing = db.fallNotificationDao().getByEventId(fallEvent.eventId)
+            if (existing != null) return@launch
+            
+            // 存本地
+            val notification = FallNotification(
+                eventId = fallEvent.eventId,
+                elderName = status.name.ifEmpty { elderName },
+                timestamp = fallEvent.timestamp,
+                latitude = fallEvent.latitude,
+                longitude = fallEvent.longitude,
+                impactG = fallEvent.impactG,
+                mlScore = fallEvent.mlScore,
+                isRead = false,
+                isHandled = false
+            )
+            db.fallNotificationDao().insert(notification)
+            
+            // 发系统通知
+            showFallNotification(notification)
+            
+            Log.i("HomeFragment", "新跌倒通知已保存: eventId=${fallEvent.eventId}")
+        }
+    }
+    
+    private fun showFallNotification(notification: FallNotification) {
+        try {
+            val channelId = "fall_alert"
+            val manager = requireContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            // 创建通知渠道（API 26+）
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId, "跌倒警报", android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "老人跌倒时接收紧急通知"
+                    enableVibration(true)
+                    enableLights(true)
+                }
+                manager.createNotificationChannel(channel)
+            }
+            
+            val intent = requireContext().packageManager.getLaunchIntentForPackage(requireContext().packageName)
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                requireContext(), 0, intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            
+            val notif = android.app.Notification.Builder(requireContext(), channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
+                .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
+                .setPriority(android.app.Notification.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+            
+            manager.notify(notification.eventId.hashCode(), notif)
+        } catch (e: Exception) {
+            Log.e("HomeFragment", "系统通知发送失败: ${e.message}")
+        }
+    }
     
     override fun onResume() {
         super.onResume()
@@ -225,8 +310,61 @@ class HomeFragment : Fragment() {
         updateUI()
     }
 
+    // ==================== v21: WS 实时事件监听 ====================
+
+    private var wsListenerJob: kotlinx.coroutines.Job? = null
+
+    private fun startWSListener() {
+        // 连接 WS
+        WSClient.connect(requireContext())
+
+        // 监听 WS 事件
+        wsListenerJob?.cancel()
+        wsListenerJob = viewLifecycleOwner.lifecycleScope.launch {
+            WSClient.events.collect { event ->
+                when (event) {
+                    is WSClient.WSEvent.FallEvent -> {
+                        Log.i("HomeFragment", "🔴 WS收到跌倒事件: eventId=${event.eventId}")
+                        // 保存到本地并发系统通知
+                        val notification = FallNotification(
+                            eventId = event.eventId,
+                            elderName = CloudBaseClient.getElderName(),
+                            timestamp = event.timestamp,
+                            latitude = event.latitude,
+                            longitude = event.longitude,
+                            impactG = event.impactG,
+                            mlScore = event.mlScore,
+                            isRead = false,
+                            isHandled = false
+                        )
+                        val db = AppDatabase.getInstance(requireContext())
+                        val existing = db.fallNotificationDao().getByEventId(event.eventId)
+                        if (existing == null) {
+                            db.fallNotificationDao().insert(notification)
+                            showFallNotification(notification)
+                        }
+                        // 刷新UI
+                        loadElderStatus()
+                    }
+
+                    is WSClient.WSEvent.LocationUpdate -> {
+                        Log.i("HomeFragment", "📍 WS收到位置更新")
+                        // 刷新UI显示新位置
+                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            loadElderStatus()
+                        }
+                    }
+
+                    else -> { /* 其他事件由 RemoteAssistManager 处理 */ }
+                }
+            }
+        }
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        wsListenerJob?.cancel()
+        wsListenerJob = null
         _binding = null
     }
 }

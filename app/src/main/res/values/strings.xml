@@ -3,7 +3,7 @@
     <string name="app_name">亲情守护</string>
     <string name="title_home">首页</string>
     <string name="title_geofence">围栏</string>
-    <string name="title_history">历史</string>
+    <string name="title_history">通知</string>
     <string name="title_settings">设置</string>
     
     <!-- Home -->

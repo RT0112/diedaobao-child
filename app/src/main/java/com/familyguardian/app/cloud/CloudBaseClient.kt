@@ -22,8 +22,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 object CloudBaseClient {
     
     private const val TAG = "CloudBaseClient"
-    private const val ENV_ID = "diedaobao-cdn-d4g496tvv296f0ac2"
-    private const val BASE_URL = "https://$ENV_ID-1409685971.ap-shanghai.app.tcloudbase.com"
+    // K70本地服务器（局域网直连）
+    // K70 WiFi IP: 192.168.4.19（同一局域网可直连）
+    // 后续需配置内网穿透给外网用
+    private const val BASE_URL = "https://scheduling-researchers-discuss-compatible.trycloudflare.com"
     
     private const val PREFS_NAME = "cloudbase"
     private const val KEY_USER_ID = "user_id"
@@ -608,7 +610,17 @@ object CloudBaseClient {
         val lastUpdate: Long,
         val status: String,
         val pullLocationStatus: String? = null,  // "pending" | "done" | "idle"
-        val pullRequestTime: Long? = null         // 上次拉取请求时间戳
+        val pullRequestTime: Long? = null,        // 上次拉取请求时间戳
+        val lastFallEvent: LastFallEvent? = null   // 最近跌倒事件（精简版，供通知检测）
+    )
+    
+    data class LastFallEvent(
+        val eventId: String = "",
+        val timestamp: Long = 0,
+        val impactG: Double = 0.0,
+        val mlScore: Double = 0.0,
+        val latitude: Double? = null,
+        val longitude: Double? = null
     )
     
     data class Location(

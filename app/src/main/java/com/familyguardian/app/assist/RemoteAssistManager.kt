@@ -1,5 +1,6 @@
 package com.familyguardian.app.assist
 
+import com.familyguardian.app.cloud.WSClient
 import com.familyguardian.app.util.AppLogger
 import android.content.Context
 import android.graphics.Bitmap
@@ -8,26 +9,27 @@ import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * 子女端远程协助管理器
+ * 子女端远程协助管理器（v3 WebSocket 实时推送 + HTTP 降级）
  * 
- * 架构（v2 去掉 WebRTC P2P，改用 CloudBase 帧中继）：
- * 1. 发起协助请求 → HTTP POST /remote-assist action=request
- * 2. 轮询状态          → HTTP POST /remote-assist action=check_status
- * 3. 老人同意后拉取屏幕帧 → HTTP POST /remote-assist action=poll_frame
- * 4. 发送触控指令      → HTTP POST /remote-assist action=signal (type=touch)
- * 5. 结束协助          → HTTP POST /remote-assist action=end
+ * 架构（v3 WebSocket + HTTP 降级）：
+ * 1. 发起协助请求 → WS assist_request + HTTP POST 降级
+ * 2. 等待老人响应 → WS assist_response 推送（降级 HTTP check_status 轮询）
+ * 3. 接收屏幕帧   → WS assist_frame 推送（降级 HTTP poll_frame）
+ * 4. 发送触控指令 → WS assist_signal（降级 HTTP POST signal）
+ * 5. 结束协助     → WS assist_end + HTTP end
  */
 class RemoteAssistManager(private val context: Context) {
 
     companion object {
         private const val TAG = "RemoteAssistManager"
         private const val SIGNAL_URL =
-            "https://diedaobao-cdn-d4g496tvv296f0ac2-1409685971.ap-shanghai.app.tcloudbase.com/remote-assist"
+            "https://scheduling-researchers-discuss-compatible.trycloudflare.com/remote-assist"
         private const val STATUS_POLL_MS = 2000L
         private const val FRAME_POLL_MS = 300L   // 帧轮询间隔（独立集合后服务端<1s响应）
         private const val REQUEST_TIMEOUT_MS = 60_000L
@@ -55,6 +57,81 @@ class RemoteAssistManager(private val context: Context) {
         elderId = boundElderId
         Log.i(TAG, "初始化: userId=$userId, elderId=$elderId")
         AppLogger.i(TAG, "[诊断] 子女端初始化: userId=$userId, elderId=$elderId")
+
+        // 连接 WebSocket
+        WSClient.connect(context)
+
+        // 监听 WS 事件
+        startWSEventListener()
+    }
+
+    // ==================== WS 事件监听 ====================
+
+    private var wsEventListenerJob: Job? = null
+
+    private fun startWSEventListener() {
+        wsEventListenerJob?.cancel()
+        wsEventListenerJob = CoroutineScope(Dispatchers.IO).launch {
+            WSClient.events.collect { event ->
+                when (event) {
+                    is WSClient.WSEvent.AssistResponse -> {
+                        if (currentState != State.REQUESTING) return@collect
+                        if (event.accepted) {
+                            stopStatusPolling()  // 停止 HTTP 轮询
+                            updateState(State.ACCEPTED, "老人已接受")
+                            delay(500)
+                            startFramePolling()
+                        } else {
+                            stopStatusPolling()
+                            updateState(State.REJECTED, "老人拒绝了协助请求")
+                        }
+                    }
+
+                    is WSClient.WSEvent.AssistFrame -> {
+                        if (currentState != State.STREAMING && currentState != State.CONNECTING) return@collect
+                        handleWSFrame(event)
+                    }
+
+                    is WSClient.WSEvent.AssistEnd -> {
+                        stopPolling()
+                        updateState(State.DISCONNECTED, "协助已结束")
+                    }
+
+                    is WSClient.WSEvent.AssistCancel -> {
+                        stopPolling()
+                        updateState(State.ERROR, "协助请求已取消")
+                    }
+
+                    is WSClient.WSEvent.FallEvent -> {
+                        // 跌倒事件由 HomeFragment 处理，这里不处理
+                    }
+
+                    is WSClient.WSEvent.LocationUpdate -> {
+                        // 位置更新由 HomeFragment 处理，这里不处理
+                    }
+                }
+            }
+        }
+    }
+
+    private fun handleWSFrame(frame: WSClient.WSEvent.AssistFrame) {
+        try {
+            val bytes = Base64.decode(frame.frameData, Base64.DEFAULT)
+            if (bytes.isEmpty()) return
+
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            if (bitmap != null) {
+                lastFrameNum = frame.frameNum
+                if (currentState != State.STREAMING) {
+                    updateState(State.STREAMING, null)
+                }
+                Handler(android.os.Looper.getMainLooper()).post {
+                    onFrameReceived?.invoke(bitmap, frame.width, frame.height)
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "WS帧解码失败: ${e.message}")
+        }
     }
 
     // ==================== 发起协助 ====================
@@ -68,6 +145,13 @@ class RemoteAssistManager(private val context: Context) {
         }
         updateState(State.REQUESTING, null)
 
+        // WS 发送协助请求（实时推送）
+        val eid = elderId
+        if (eid != null && WSClient.isWSConnected()) {
+            WSClient.sendAssistRequest(eid, guardianName)
+        }
+
+        // 同时走 HTTP 保底（处理冲突检测等）
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val body = JSONObject().apply {
@@ -82,7 +166,13 @@ class RemoteAssistManager(private val context: Context) {
                 if (code == 200) {
                     requestStartTime = System.currentTimeMillis()
                     updateState(State.REQUESTING, "等待老人响应...")
-                    startStatusPolling()
+                    // WS 已连接则不需要 HTTP 轮询，WS 会推送 assist_response
+                    if (!WSClient.isWSConnected()) {
+                        startStatusPolling()
+                    } else {
+                        // WS 模式：仍需超时检测
+                        startWSTimeoutWatch()
+                    }
                 } else {
                     val msg = json.optString("message", "请求失败")
                     when (code) {
@@ -98,9 +188,33 @@ class RemoteAssistManager(private val context: Context) {
         }
     }
 
+    // WS 模式下的超时检测
+    private var wsTimeoutJob: Job? = null
+
+    private fun startWSTimeoutWatch() {
+        wsTimeoutJob?.cancel()
+        wsTimeoutJob = CoroutineScope(Dispatchers.IO).launch {
+            delay(REQUEST_TIMEOUT_MS)
+            if (currentState == State.REQUESTING) {
+                updateState(State.TIMEOUT, "等待超时，老人未响应")
+                cancelRemoteRequest()
+            }
+        }
+    }
+
+    private fun stopWSTimeoutWatch() {
+        wsTimeoutJob?.cancel()
+        wsTimeoutJob = null
+    }
+
     fun cancelRequest() {
         if (currentState != State.REQUESTING) return
         stopPolling()
+        stopWSTimeoutWatch()
+        // WS 取消
+        val eid = elderId
+        if (eid != null) WSClient.sendAssistCancel(eid)
+        // HTTP 取消
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 httpPost(JSONObject().apply {
@@ -117,8 +231,10 @@ class RemoteAssistManager(private val context: Context) {
 
     private var statusPollJob: Job? = null
 
+    // ==================== 状态轮询（HTTP 降级） ====================
+
     private fun startStatusPolling() {
-        stopPolling()
+        stopStatusPolling()
         statusPollJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
                 try {
@@ -136,10 +252,6 @@ class RemoteAssistManager(private val context: Context) {
 
                     when (json.optString("status", "idle")) {
                         "active" -> {
-                            // ⚠️ 不要调 statusPollJob?.cancel()！
-                            // cancel() 会取消当前协程，导致 delay(500) 抛 CancellationException，
-                            // startFramePolling() 永远不会被调用。
-                            // return@launch 已经足够退出 while 循环。
                             // 保存老人真实屏幕分辨率（用于触控坐标映射）
                             val realW = json.optInt("screenWidth", 720)
                             val realH = json.optInt("screenHeight", 1280)
@@ -185,6 +297,45 @@ class RemoteAssistManager(private val context: Context) {
     private fun startFramePolling() {
         updateState(State.CONNECTING, "等待屏幕画面...")
         lastFrameNum = 0
+
+        // WS 已连接：帧走 WS 推送，不需要 HTTP 轮询
+        // WS 的 assist_frame 事件在 startWSEventListener 中处理
+        // 只需设个超时检测
+        if (WSClient.isWSConnected()) {
+            AppLogger.i(TAG, "WS帧模式：等待 WS assist_frame 推送")
+            startFrameTimeoutWatch()
+            return
+        }
+
+        // HTTP 降级轮询
+        startHTTPFramePolling()
+    }
+
+    private var frameTimeoutJob: Job? = null
+
+    private fun startFrameTimeoutWatch() {
+        frameTimeoutJob?.cancel()
+        frameTimeoutJob = CoroutineScope(Dispatchers.IO).launch {
+            var emptyCount = 0
+            while (isActive && (currentState == State.CONNECTING || currentState == State.STREAMING)) {
+                delay(1000)
+                // 检查是否长时间没收到帧
+                // 简化：60秒超时
+                emptyCount++
+                if (emptyCount >= 60) {
+                    updateState(State.DISCONNECTED, "连接超时，老人端未上传画面")
+                    return@launch
+                }
+            }
+        }
+    }
+
+    private fun stopFrameTimeoutWatch() {
+        frameTimeoutJob?.cancel()
+        frameTimeoutJob = null
+    }
+
+    private fun startHTTPFramePolling() {
 
         framePollJob = CoroutineScope(Dispatchers.IO).launch {
             var emptyCount = 0
@@ -296,6 +447,36 @@ class RemoteAssistManager(private val context: Context) {
     fun getElderScreenSize(): Pair<Int, Int> = Pair(elderScreenWidth, elderScreenHeight)
 
     private fun sendTouchSignal(action: String, params: Map<String, Any>) {
+        val eid = elderId
+        // WS 优先发送（低延迟）
+        if (eid != null && WSClient.isWSConnected()) {
+            when (action) {
+                "click" -> {
+                    val x = (params["x"] as? Number)?.toFloat() ?: 0f
+                    val y = (params["y"] as? Number)?.toFloat() ?: 0f
+                    val dur = (params["duration"] as? Number)?.toLong() ?: 100L
+                    WSClient.sendTouchSignal(eid, action, x, y, dur)
+                }
+                "swipe" -> {
+                    val x1 = (params["x1"] as? Number)?.toFloat() ?: 0f
+                    val y1 = (params["y1"] as? Number)?.toFloat() ?: 0f
+                    val x2 = (params["x2"] as? Number)?.toFloat() ?: 0f
+                    val y2 = (params["y2"] as? Number)?.toFloat() ?: 0f
+                    val dur = (params["duration"] as? Number)?.toLong() ?: 300L
+                    WSClient.sendSwipeSignal(eid, x1, y1, x2, y2, dur)
+                }
+                else -> {
+                    // 其他类型走 HTTP
+                    sendTouchSignalHTTP(action, params)
+                }
+            }
+            return
+        }
+        // HTTP 降级
+        sendTouchSignalHTTP(action, params)
+    }
+
+    private fun sendTouchSignalHTTP(action: String, params: Map<String, Any>) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val signalData = mutableMapOf<String, Any>("type" to "touch", "touchAction" to action)
@@ -314,6 +495,13 @@ class RemoteAssistManager(private val context: Context) {
 
     // v19.7.3: 导航键指令
     fun sendKeyAction(keyCode: String) {
+        val eid = elderId
+        // WS 优先
+        if (eid != null && WSClient.isWSConnected()) {
+            WSClient.sendKeySignal(eid, keyCode)
+            return
+        }
+        // HTTP 降级
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val signalData = mapOf<String, Any>("type" to "key", "keyCode" to keyCode)
@@ -334,15 +522,12 @@ class RemoteAssistManager(private val context: Context) {
 
     fun endAssist() {
         updateState(State.DISCONNECTED, null)
+        val eid = elderId
+        // WS 结束
+        if (eid != null) WSClient.sendAssistEnd(eid)
+        // HTTP 结束
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // 通知老人结束
-                httpPost(JSONObject().apply {
-                    put("action", "signal")
-                    put("from", userId)
-                    put("to", elderId)
-                    put("signal", JSONObject(mapOf("type" to "end_session")))
-                })
                 // 通知云端结束
                 httpPost(JSONObject().apply {
                     put("action", "end")
@@ -351,17 +536,27 @@ class RemoteAssistManager(private val context: Context) {
             } catch (_: Exception) {}
         }
         stopPolling()
+        stopWSTimeoutWatch()
+        stopFrameTimeoutWatch()
+    }
+
+    private fun stopStatusPolling() {
+        statusPollJob?.cancel()
+        statusPollJob = null
     }
 
     fun stopPolling() {
-        statusPollJob?.cancel()
-        statusPollJob = null
+        stopStatusPolling()
         framePollJob?.cancel()
         framePollJob = null
     }
 
     fun dispose() {
         stopPolling()
+        stopWSTimeoutWatch()
+        stopFrameTimeoutWatch()
+        wsEventListenerJob?.cancel()
+        wsEventListenerJob = null
         currentState = State.IDLE
         Log.i(TAG, "资源已释放")
     }
