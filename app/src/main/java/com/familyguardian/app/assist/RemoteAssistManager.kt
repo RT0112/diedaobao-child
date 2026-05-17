@@ -29,9 +29,9 @@ class RemoteAssistManager(private val context: Context) {
     companion object {
         private const val TAG = "RemoteAssistManager"
         private const val SIGNAL_URL =
-            "https://scheduling-researchers-discuss-compatible.trycloudflare.com/remote-assist"
+            "http://192.168.4.19:3000/remote-assist"
         private const val STATUS_POLL_MS = 2000L
-        private const val FRAME_POLL_MS = 300L   // 帧轮询间隔（独立集合后服务端<1s响应）
+        private const val FRAME_POLL_MS = 100L   // v26: 帧轮询间隔100ms，配合老人端3fps
         private const val REQUEST_TIMEOUT_MS = 60_000L
     }
 
@@ -341,7 +341,7 @@ class RemoteAssistManager(private val context: Context) {
             var emptyCount = 0
             var totalEmptyCount = 0  // v19.7.4: 累计空帧总数，不归零
             var decodeFailCount = 0
-            val MAX_TOTAL_EMPTY = 200  // 200 * 300ms = 60s 无帧超时
+            val MAX_TOTAL_EMPTY = 600  // v26: 100ms*600=60s 无帧超时
             while (isActive) {
                 try {
                     val json = httpPost(JSONObject().apply {
