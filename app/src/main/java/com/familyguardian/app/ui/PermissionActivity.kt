@@ -36,6 +36,9 @@ class PermissionActivity : AppCompatActivity() {
         add(PermissionItem("📍 精确定位", "查看老人位置", Manifest.permission.ACCESS_FINE_LOCATION))
         add(PermissionItem("📍 大致定位", "辅助定位", Manifest.permission.ACCESS_COARSE_LOCATION, false))
         add(PermissionItem("📞 电话", "一键拨打老人电话", Manifest.permission.CALL_PHONE))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            add(PermissionItem("🗺️ 后台定位", "持续追踪老人位置", Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(PermissionItem("🔔 通知", "接收跌倒报警通知", Manifest.permission.POST_NOTIFICATIONS))
         }
@@ -434,8 +437,21 @@ class PermissionActivity : AppCompatActivity() {
 
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing)
-        } else {
-            Toast.makeText(this, "运行时权限已授权", Toast.LENGTH_SHORT).show()
+            return  // 等待回调，不继续执行
+        }
+
+        // 运行时权限全部已授权，检查特殊权限
+        var allReady = true
+
+        // 检查悬浮窗权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "悬浮窗权限未授权，请手动开启", Toast.LENGTH_LONG).show()
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = Uri.parse("package:$packageName")
+                })
+                allReady = false
+            }
         }
 
         // 检查电池优化
@@ -452,11 +468,13 @@ class PermissionActivity : AppCompatActivity() {
                     }
                     .setNegativeButton("稍后", null)
                     .show()
-                return
+                allReady = false
             }
         }
 
-        Toast.makeText(this, "所有权限已就绪！", Toast.LENGTH_LONG).show()
+        if (allReady) {
+            Toast.makeText(this, "所有权限已就绪！", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun openAppSettings() {
