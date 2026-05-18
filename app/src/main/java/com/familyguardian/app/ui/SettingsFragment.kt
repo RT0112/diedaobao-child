@@ -33,6 +33,18 @@ class SettingsFragment : Fragment() {
         // 权限设置
         b.btnPermissionSettings.setOnClickListener { openPermissionSettings() }
         
+        // 强制弹窗通知开关
+        val prefs = requireContext().getSharedPreferences("family_guardian_settings", 0)
+        b.switchForcePopup.isChecked = prefs.getBoolean("force_popup_notification", true)
+        b.switchForcePopup.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("force_popup_notification", isChecked).apply()
+            android.widget.Toast.makeText(
+                requireContext(),
+                if (isChecked) "已开启强制弹窗通知" else "已关闭强制弹窗通知，使用普通通知",
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+        
         // 解绑按钮
         b.btnUnbind.setOnClickListener { showResetConfirm() }
         

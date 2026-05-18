@@ -283,24 +283,49 @@ class HomeFragment : Fragment() {
                 manager.createNotificationChannel(channel)
             }
             
+            // 读取强制弹窗通知开关
+            val prefs = requireContext().getSharedPreferences("family_guardian_settings", 0)
+            val forcePopup = prefs.getBoolean("force_popup_notification", true)
+            Log.d("HomeFragment", "showFallNotification: forcePopup=$forcePopup")
+            
+            // 修复：getLaunchIntentForPackage() 可能返回 null，需处理
             val intent = requireContext().packageManager.getLaunchIntentForPackage(requireContext().packageName)
+                ?: android.content.Intent(requireContext(), com.familyguardian.app.MainActivity::class.java)
+            Log.d("HomeFragment", "showFallNotification: intent=$intent")
+            
             val pendingIntent = android.app.PendingIntent.getActivity(
                 requireContext(), 0, intent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
+            Log.d("HomeFragment", "showFallNotification: pendingIntent created")
             
-            val notif = android.app.Notification.Builder(requireContext(), channelId)
+            val builder = android.app.Notification.Builder(requireContext(), channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
                 .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
                 .setPriority(android.app.Notification.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
-                .build()
+                .setDefaults(android.app.Notification.DEFAULT_ALL)
+            
+            // 强制弹窗模式：使用全屏Intent（类似来电），绕过MIUI静默通知
+            if (forcePopup) {
+                val fullScreenIntent = android.app.PendingIntent.getActivity(
+                    requireContext(), 1, intent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+                builder.setFullScreenIntent(fullScreenIntent, true)
+                Log.d("HomeFragment", "showFallNotification: fullScreenIntent enabled")
+            }
+            
+            val notif = builder.build()
+            Log.d("HomeFragment", "showFallNotification: notification built, calling notify()")
             
             manager.notify(notification.eventId.hashCode(), notif)
+            Log.d("HomeFragment", "showFallNotification: manager.notify() SUCCESS")
         } catch (e: Exception) {
             Log.e("HomeFragment", "系统通知发送失败: ${e.message}")
+            Log.e("HomeFragment", android.util.Log.getStackTraceString(e))
         }
     }
     

@@ -29,10 +29,11 @@ class RemoteAssistManager(private val context: Context) {
     companion object {
         private const val TAG = "RemoteAssistManager"
         private const val SIGNAL_URL =
-            "http://192.168.4.19:3000/remote-assist"
+            "https://clerk-anything-adopt-lately.trycloudflare.com/remote-assist"
         private const val STATUS_POLL_MS = 2000L
-        private const val FRAME_POLL_MS = 100L   // v26: 帧轮询间隔100ms，配合老人端3fps
+        private const val FRAME_POLL_MS = 100L   // v27: 帧轮询间隔100ms，配合老人端3fps
         private const val REQUEST_TIMEOUT_MS = 60_000L
+        private const val MAX_TOTAL_EMPTY = 3000  // v27: 100ms*3000=300s(5分钟)无帧超时，避免误断
     }
 
     enum class State {
@@ -137,9 +138,11 @@ class RemoteAssistManager(private val context: Context) {
     // ==================== 发起协助 ====================
 
     fun requestAssist(guardianName: String) {
-        // v19.7.4: 非IDLE状态先清理旧会话
+        // v27: 非IDLE状态先清理旧会话，并通知老人端结束旧会话（兜底机制）
         if (currentState != State.IDLE) {
             AppLogger.w(TAG, "requestAssist: 当前状态=$currentState，先清理旧会话")
+            // 兜底：发 assist_end 让老人端结束旧会话
+            sendAssistEndToElder()
             stopPolling()
             currentState = State.IDLE
         }
@@ -198,6 +201,33 @@ class RemoteAssistManager(private val context: Context) {
             if (currentState == State.REQUESTING) {
                 updateState(State.TIMEOUT, "等待超时，老人未响应")
                 cancelRemoteRequest()
+            }
+        }
+    }
+
+    /** v27: 发送 assist_end 给老人端，顶掉旧会话（兜底机制） */
+    private fun sendAssistEndToElder() {
+        val eid = elderId
+        if (eid == null) {
+            AppLogger.w(TAG, "sendAssistEndToElder: elderId=null")
+            return
+        }
+        // WS 优先
+        if (WSClient.isWSConnected()) {
+            // 通过 WS 发送 assist_end
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    // 用 HTTP 发 assist_end（WS 发消息需要后端路由支持）
+                    val body = org.json.JSONObject().apply {
+                        put("action", "end")
+                        put("elderId", eid)
+                        put("guardianId", userId)
+                    }
+                    val json = httpPost(body)
+                    AppLogger.i(TAG, "兜底：已发送 assist_end 清理旧会话: ${json.optString("message")}")
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "兜底：assist_end 发送失败: ${e.message}")
+                }
             }
         }
     }
@@ -319,11 +349,10 @@ class RemoteAssistManager(private val context: Context) {
             var emptyCount = 0
             while (isActive && (currentState == State.CONNECTING || currentState == State.STREAMING)) {
                 delay(1000)
-                // 检查是否长时间没收到帧
-                // 简化：60秒超时
+                // v27: 超时从60秒延长到5分钟（300秒），避免误断
                 emptyCount++
-                if (emptyCount >= 60) {
-                    updateState(State.DISCONNECTED, "连接超时，老人端未上传画面")
+                if (emptyCount >= 300) {
+                    updateState(State.DISCONNECTED, "连接超时，请检查老人端屏幕共享状态")
                     return@launch
                 }
             }
@@ -341,7 +370,7 @@ class RemoteAssistManager(private val context: Context) {
             var emptyCount = 0
             var totalEmptyCount = 0  // v19.7.4: 累计空帧总数，不归零
             var decodeFailCount = 0
-            val MAX_TOTAL_EMPTY = 600  // v26: 100ms*600=60s 无帧超时
+            val MAX = MAX_TOTAL_EMPTY  // v27: 从伴生对象读取（=3000，5分钟 timeout）
             while (isActive) {
                 try {
                     val json = httpPost(JSONObject().apply {
@@ -402,8 +431,8 @@ class RemoteAssistManager(private val context: Context) {
                         AppLogger.i(TAG, "[帧拉取] 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
                         Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
 
-                        // v19.7.4: 60秒无帧超时断开
-                        if (totalEmptyCount >= MAX_TOTAL_EMPTY) {
+                        // v19.7.4: 5分钟无帧超时断开
+                        if (totalEmptyCount >= MAX) {
                             AppLogger.w(TAG, "帧拉取超时: ${totalEmptyCount}次无帧，自动断开")
                             updateState(State.DISCONNECTED, "连接超时，老人端未上传画面")
                             return@launch

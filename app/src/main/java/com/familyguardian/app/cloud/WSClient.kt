@@ -26,8 +26,8 @@ import java.util.concurrent.TimeUnit
 object WSClient {
     private const val TAG = "WSClient"
     
-    // K70 本地服务器（子女端通过局域网IP连接）
-    private const val WS_URL = "wss://scheduling-researchers-discuss-compatible.trycloudflare.com/ws"
+    // Cloudflare 隧道（外网固定访问）
+    private const val WS_URL = "wss://clerk-anything-adopt-lately.trycloudflare.com/ws"
     
     // 重连配置
     private const val RECONNECT_DELAY_MS = 5000L
@@ -41,7 +41,8 @@ object WSClient {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // 事件流：供 UI/Service 订阅
-    private val _events = MutableSharedFlow<WSEvent>(extraBufferCapacity = 50)
+    // replay=1 保证新订阅者能收到最新一条消息（避免 FallEvent 丢失）
+    private val _events = MutableSharedFlow<WSEvent>(replay = 1, extraBufferCapacity = 50)
     val events: SharedFlow<WSEvent> = _events
     
     private var userId: String? = null

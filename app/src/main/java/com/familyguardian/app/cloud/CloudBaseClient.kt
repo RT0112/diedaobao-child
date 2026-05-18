@@ -22,10 +22,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 object CloudBaseClient {
     
     private const val TAG = "CloudBaseClient"
-    // K70本地服务器（局域网直连）
-    // K70 WiFi IP: 192.168.4.19（同一局域网可直连）
-    // 后续需配置内网穿透给外网用
-    private const val BASE_URL = "https://scheduling-researchers-discuss-compatible.trycloudflare.com"
+    // Cloudflare 隧道（外网固定访问）
+    private const val BASE_URL = "https://clerk-anything-adopt-lately.trycloudflare.com"
     
     private const val PREFS_NAME = "cloudbase"
     private const val KEY_USER_ID = "user_id"
