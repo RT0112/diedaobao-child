@@ -100,6 +100,7 @@ class MapActivity : AppCompatActivity() {
                         "add" -> setupAddMode()
                         "edit" -> setupEditMode()
                         "view_fence" -> setupViewFenceMode()
+                        "view_fall" -> setupViewFallMode()
                         else -> loadElderData()
                     }
                 }
@@ -115,6 +116,7 @@ class MapActivity : AppCompatActivity() {
                 "add" -> "➕ 添加围栏"
                 "edit" -> "✏️ 编辑围栏"
                 "view_fence" -> intent.getStringExtra("fenceName") ?: "围栏详情"
+                "view_fall" -> intent.getStringExtra("title") ?: "🚨 跌倒位置"
                 else -> "📍 老人位置"
             }
             setDisplayHomeAsUpEnabled(true)
@@ -445,6 +447,20 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    // ========================================
+    // 跌倒位置查看模式
+    // ========================================
+    private fun setupViewFallMode() {
+        val lat = intent.getDoubleExtra("latitude", 0.0)
+        val lng = intent.getDoubleExtra("longitude", 0.0)
+        val title = intent.getStringExtra("title") ?: "跌倒位置"
+        if (lat == 0.0 && lng == 0.0) {
+            Toast.makeText(this, "未获取到跌倒位置", Toast.LENGTH_SHORT).show()
+            return
+        }
+        evalJs("if(map){var g=wgs2gcj($lat,$lng);L.circleMarker([g[0],g[1]],{radius:10,color:'#f44336',fillColor:'#f44336',fillOpacity:0.8}).addTo(map).bindPopup('<b>$title</b><br>经度: ${"%.6f".format(lng)}<br>纬度: ${"%.6f".format(lat)}').openPopup();map.setView([g[0],g[1]],16)}")
     }
 
     // ========================================

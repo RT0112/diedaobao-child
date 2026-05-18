@@ -288,13 +288,16 @@ class HomeFragment : Fragment() {
             val forcePopup = prefs.getBoolean("force_popup_notification", true)
             Log.d("HomeFragment", "showFallNotification: forcePopup=$forcePopup")
             
-            // 修复：getLaunchIntentForPackage() 可能返回 null，需处理
-            val intent = requireContext().packageManager.getLaunchIntentForPackage(requireContext().packageName)
-                ?: android.content.Intent(requireContext(), com.familyguardian.app.MainActivity::class.java)
-            Log.d("HomeFragment", "showFallNotification: intent=$intent")
-            
+            // 点击通知打开内置地图显示跌倒位置
+            val mapIntent = android.content.Intent(requireContext(), com.familyguardian.app.ui.MapActivity::class.java).apply {
+                putExtra("mode", "view_fall")
+                putExtra("latitude", notification.latitude)
+                putExtra("longitude", notification.longitude)
+                putExtra("title", notification.elderName + "跌倒位置")
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
             val pendingIntent = android.app.PendingIntent.getActivity(
-                requireContext(), 0, intent,
+                requireContext(), notification.eventId.hashCode(), mapIntent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
             Log.d("HomeFragment", "showFallNotification: pendingIntent created")
@@ -310,12 +313,19 @@ class HomeFragment : Fragment() {
             
             // 强制弹窗模式：使用全屏Intent（类似来电），绕过MIUI静默通知
             if (forcePopup) {
-                val fullScreenIntent = android.app.PendingIntent.getActivity(
-                    requireContext(), 1, intent,
+                val fullScreenMapIntent = android.content.Intent(requireContext(), com.familyguardian.app.ui.MapActivity::class.java).apply {
+                    putExtra("mode", "view_fall")
+                    putExtra("latitude", notification.latitude)
+                    putExtra("longitude", notification.longitude)
+                    putExtra("title", notification.elderName + "跌倒位置")
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val fullScreenPendingIntent = android.app.PendingIntent.getActivity(
+                    requireContext(), notification.eventId.hashCode() + 1, fullScreenMapIntent,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.setFullScreenIntent(fullScreenIntent, true)
-                Log.d("HomeFragment", "showFallNotification: fullScreenIntent enabled")
+                builder.setFullScreenIntent(fullScreenPendingIntent, true)
+                Log.d("HomeFragment", "showFallNotification: fullScreenIntent enabled -> MapActivity")
             }
             
             val notif = builder.build()
