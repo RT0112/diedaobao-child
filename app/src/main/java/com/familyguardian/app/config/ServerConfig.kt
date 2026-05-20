@@ -6,8 +6,7 @@ package com.familyguardian.app.config
  */
 object ServerConfig {
     // ⚠️ 改这里就行！
-    // 子女端测试时在K70上用localhost，生产环境改为公网地址
-    val BASE_URL = "http://localhost:3000"
+    val BASE_URL = "https://oscular-august-equanimously.ngrok-free.dev"
     
     // 派生URL（自动从BASE_URL计算，不需要改）
     // 根据BASE_URL协议自动选择ws/wss
