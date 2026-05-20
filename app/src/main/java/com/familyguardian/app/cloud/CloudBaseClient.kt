@@ -1,5 +1,6 @@
 package com.familyguardian.app.cloud
 
+import com.familyguardian.app.config.ServerConfig
 import com.familyguardian.app.util.AppLogger
 import android.content.Context
 import android.content.SharedPreferences
@@ -22,8 +23,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 object CloudBaseClient {
     
     private const val TAG = "CloudBaseClient"
-    // Cloudflare 隧道（外网固定访问）
-    private const val BASE_URL = "https://clerk-anything-adopt-lately.trycloudflare.com"
+    // Serveo.net 隧道（生产环境）
+    // BASE_URL已迁移到ServerConfig
+    private val BASE_URL = ServerConfig.BASE_URL
     
     private const val PREFS_NAME = "cloudbase"
     private const val KEY_USER_ID = "user_id"
@@ -645,4 +647,59 @@ object CloudBaseClient {
         val isBreached: Boolean = false,
         val createdAt: Long = System.currentTimeMillis()
     )
+    
+    // ========== 反馈功能 ==========
+    
+    /**
+     * 获取跌倒事件列表（原始JSON格式，供反馈功能使用）
+     */
+    suspend fun getFallEvents(count: Int = 20): List<org.json.JSONObject> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val eid = elderId ?: return@withContext emptyList()
+                val url = "$BASE_URL/fall-history?elderId=$eid&limit=$count"
+                
+                val request = Request.Builder().url(url).get().build()
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "getFallEvents failed: ${response.code}")
+                    return@withContext emptyList()
+                }
+                
+                val responseBody = response.body?.string() ?: ""
+                val json = gson.fromJson(responseBody, com.google.gson.JsonObject::class.java)
+                val code = json.get("code")?.asInt ?: 0
+                if (code != 200) {
+                    Log.e(TAG, "getFallEvents error: code=$code")
+                    return@withContext emptyList()
+                }
+                
+                val eventsArray = json.getAsJsonArray("events")
+                val events = mutableListOf<org.json.JSONObject>()
+                for (i in 0 until eventsArray.size()) {
+                    try {
+                        val eventJson = eventsArray[i].asJsonObject
+                        val jsonStr = gson.toJson(eventJson)
+                        events.add(org.json.JSONObject(jsonStr))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "getFallEvents parse error: ${e.message}")
+                    }
+                }
+                events
+            } catch (e: Exception) {
+                Log.e(TAG, "getFallEvents error: ${e.message}")
+                emptyList()
+            }
+        }
+    }
+    
+    /**
+     * 获取灵敏度等级（供反馈功能使用）
+     * TODO: 从后端API获取，目前返回默认值1
+     */
+    fun getSensitivityLevel(): Int {
+        // TODO: 从后端API获取灵敏度等级
+        // 目前返回默认值1（对应 DetectionConfig.SensitivityLevel.MEDIUM）
+        return 1
+    }
 }

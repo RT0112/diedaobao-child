@@ -1,5 +1,6 @@
 package com.familyguardian.app.assist
 
+import com.familyguardian.app.config.ServerConfig
 import com.familyguardian.app.cloud.WSClient
 import com.familyguardian.app.util.AppLogger
 import android.content.Context
@@ -28,8 +29,8 @@ class RemoteAssistManager(private val context: Context) {
 
     companion object {
         private const val TAG = "RemoteAssistManager"
-        private const val SIGNAL_URL =
-            "https://clerk-anything-adopt-lately.trycloudflare.com/remote-assist"
+        // URL已迁移到ServerConfig
+        private val SIGNAL_URL = ServerConfig.REMOTE_ASSIST_URL
         private const val STATUS_POLL_MS = 2000L
         private const val FRAME_POLL_MS = 100L   // v27: 帧轮询间隔100ms，配合老人端3fps
         private const val REQUEST_TIMEOUT_MS = 60_000L

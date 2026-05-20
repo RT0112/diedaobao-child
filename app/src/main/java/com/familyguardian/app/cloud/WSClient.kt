@@ -1,5 +1,6 @@
 package com.familyguardian.app.cloud
 
+import com.familyguardian.app.config.ServerConfig
 import android.content.Context
 import android.util.Log
 import com.familyguardian.app.util.AppLogger
@@ -26,8 +27,8 @@ import java.util.concurrent.TimeUnit
 object WSClient {
     private const val TAG = "WSClient"
     
-    // Cloudflare 隧道（外网固定访问）
-    private const val WS_URL = "wss://clerk-anything-adopt-lately.trycloudflare.com/ws"
+    // URL已迁移到ServerConfig
+    private val WS_URL = ServerConfig.WS_URL
     
     // 重连配置
     private const val RECONNECT_DELAY_MS = 5000L

@@ -20,7 +20,7 @@ android {
         applicationId = "com.familyguardian.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 20
+        versionCode = 21
         versionName = "0.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
