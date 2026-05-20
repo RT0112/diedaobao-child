@@ -162,6 +162,15 @@
 
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- 反馈 -->
+        <Button
+            android:id="@+id/btn_feedback"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="意见反馈"
+            android:layout_marginBottom="8dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
         <!-- 关于 -->
         <Button
             android:id="@+id/btn_about"

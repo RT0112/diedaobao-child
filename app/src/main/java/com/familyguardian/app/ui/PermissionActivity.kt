@@ -36,9 +36,6 @@ class PermissionActivity : AppCompatActivity() {
         add(PermissionItem("📍 精确定位", "查看老人位置", Manifest.permission.ACCESS_FINE_LOCATION))
         add(PermissionItem("📍 大致定位", "辅助定位", Manifest.permission.ACCESS_COARSE_LOCATION, false))
         add(PermissionItem("📞 电话", "一键拨打老人电话", Manifest.permission.CALL_PHONE))
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            add(PermissionItem("🗺️ 后台定位", "持续追踪老人位置", Manifest.permission.ACCESS_BACKGROUND_LOCATION))
-        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(PermissionItem("🔔 通知", "接收跌倒报警通知", Manifest.permission.POST_NOTIFICATIONS))
         }
@@ -162,9 +159,10 @@ class PermissionActivity : AppCompatActivity() {
         }
     }
 
-    private fun createSpecialPermissionCard(): MaterialCardView {
+private fun createSpecialPermissionCard(): MaterialCardView {
+        val act = this
         val overlayGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Settings.canDrawOverlays(this)
+            Settings.canDrawOverlays(act)
         } else true
 
         val batteryGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -172,263 +170,169 @@ class PermissionActivity : AppCompatActivity() {
             pm.isIgnoringBatteryOptimizations(packageName)
         } else true
 
-        return MaterialCardView(this).apply {
-            radius = 16f
-            cardElevation = 4f
-            setContentPadding(24, 24, 24, 24)
-            val params = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = 16 }
-            layoutParams = params
-
-            val container = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-
-            val title = TextView(context).apply {
-                text = "🔐 特殊权限（需手动开启）"
-                textSize = 14f
-                setTextColor(0xFF888888.toInt())
-                setPadding(0, 8, 0, 16)
-            }
-            container.addView(title)
-
-            // 电池优化白名单
-            val batteryRow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                setPadding(0, 16, 0, 0)
-                val name = TextView(context).apply {
-                    text = "🔋 电池优化\n允许后台接收报警推送"
-                    textSize = 15f
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                val btn = Button(context).apply {
-                    text = if (batteryGranted) "✅ 已开启" else "去设置"
-                    isEnabled = !batteryGranted
-                    setOnClickListener {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = Uri.parse("package:${context.packageName}")
-                            })
-                        }
-                    }
-                }
-                addView(name)
-                addView(btn)
-            }
-            container.addView(batteryRow)
-
-            // 开机自启
-            val autoStartRow = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, 16, 0, 0)
-                val titleRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    val name = TextView(context).apply {
-                        text = "🚀 开机自启"
-                        textSize = 15f
-                    }
-                    val openBtn = Button(context).apply {
-                        text = "去设置"
-                        setOnClickListener { openAutoStartSettings() }
-                    }
-                    addView(name)
-                    addView(openBtn)
-                }
-                val desc = TextView(context).apply {
-                    text = "⚠️ 建议开启！手机重启后可自动接收报警"
-                    textSize = 13f
-                    setTextColor(0xFFFF9800.toInt())
-                }
-                addView(titleRow)
-                addView(desc)
-            }
-            container.addView(autoStartRow)
-
-            // 通知设置
-            val notifRow = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(0, 16, 0, 0)
-                val titleRow = LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    val name = TextView(context).apply {
-                        text = "🔔 通知设置"
-                        textSize = 15f
-                    }
-                    val openBtn = Button(context).apply {
-                        text = "去设置"
-                        setOnClickListener { openNotificationSettings() }
-                    }
-                    addView(name)
-                    addView(openBtn)
-                }
-                val desc = TextView(context).apply {
-                    text = "⚠️ 必须开启「锁屏通知」「横幅通知」！否则跌倒报警弹不出来"
-                    textSize = 13f
-                    setTextColor(0xFFD32F2F.toInt())
-                }
-                val tutorialBtn = Button(context).apply {
-                    text = "查看教程"
-                    setOnClickListener { showNotificationTutorial() }
-                }
-                addView(titleRow)
-                addView(desc)
-                addView(tutorialBtn)
-            }
-            container.addView(notifRow)
-
-            addView(container)
-        }
-    }
-
-    private fun openAutoStartSettings() {
-        val intents = listOfNotNull(
-            // 小米/红米 MIUI
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.miui.securitycenter",
-                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
-                )
-            },
-            // OPPO/Realme ColorOS
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.coloros.safecenter",
-                    "com.coloros.safecenter.startupapp.StartupAppListActivity"
-                )
-            },
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.coloros.safecenter",
-                    "com.coloros.safecenter.permission.startup.StartupAppListActivity"
-                )
-            },
-            // Vivo/Funtouch OS
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.vivo.permissionmanager",
-                    "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"
-                )
-            },
-            // 华为/鸿蒙 EMUI
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.huawei.systemmanager",
-                    "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"
-                )
-            },
-            // 三星
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.samsung.android.lool",
-                    "com.samsung.android.sm.ui.battery.BatteryActivity"
-                )
-            },
-            // OnePlus
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.oneplus.security",
-                    "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity"
-                )
-            },
-            // 魅族 Flyme
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.meizu.safe",
-                    "com.meizu.safe.permission.SmartPermissionsActivity"
-                )
-            },
-            // 联想 ZUI
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.lenovo.security",
-                    "com.lenovo.security.firewall.StartupActivity"
-                )
-            },
-            // 中兴 MyOS
-            Intent().apply {
-                component = android.content.ComponentName(
-                    "com.zte.heartyservice",
-                    "com.zte.heartyservice.autoboot.BootAppListActivity"
-                )
-            }
+        val card = MaterialCardView(act)
+        card.radius = 16f
+        card.cardElevation = 4f
+        card.setContentPadding(48, 48, 48, 48)
+        val params = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
         )
-        for (intent in intents) {
-            try {
-                startActivity(intent)
-                return
-            } catch (_: Exception) { }
-        }
-        // 全部失败：打开应用详情页面
-        try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:${packageName}")
-            })
-        } catch (_: Exception) {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
-        }
-    }
+        params.bottomMargin = 32
+        card.layoutParams = params
 
-    private fun openNotificationSettings() {
-        val notifIntents = listOfNotNull(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                    putExtra(Settings.EXTRA_CHANNEL_ID, "emergency")
-                }
-            } else null,
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                } else {
-                    putExtra("app_package", packageName)
-                    putExtra("app_uid", applicationInfo.uid)
-                }
+        val container = LinearLayout(act)
+        container.orientation = LinearLayout.VERTICAL
+
+        // 标题
+        val title = TextView(act)
+        title.text = "🔐 特殊权限（需手动开启）"
+        title.textSize = 14f
+        title.setTextColor(0xFF888888.toInt())
+        title.setPadding(0, 8, 0, 24)
+        container.addView(title)
+
+        // 1. 锁屏显示（悬浮窗权限）
+        val lsRow = LinearLayout(act)
+        lsRow.orientation = LinearLayout.HORIZONTAL
+        lsRow.setPadding(0, 24, 0, 0)
+        val lsName = TextView(act)
+        lsName.text = "🔲 锁屏显示\n允许锁屏时弹出全屏告警界面"
+        lsName.textSize = 15f
+        lsName.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val lsBtn = Button(act)
+        lsBtn.text = if (overlayGranted) "✅ 已开启" else "去设置"
+        lsBtn.isEnabled = !overlayGranted
+        lsBtn.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                act.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${act.packageName}")))
             }
-        )
-        for (intent in notifIntents) {
-            try {
-                startActivity(intent)
-                return
-            } catch (_: Exception) { }
         }
-        try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = Uri.parse("package:${packageName}")
+        lsRow.addView(lsName)
+        lsRow.addView(lsBtn)
+        container.addView(lsRow)
+
+        // 2. 后台弹出界面
+        val bgRow = LinearLayout(act)
+        bgRow.orientation = LinearLayout.VERTICAL
+        bgRow.setPadding(0, 24, 0, 0)
+        val bgName = TextView(act)
+        bgName.text = "📱 后台弹出界面"
+        bgName.textSize = 15f
+        val bgDesc = TextView(act)
+        bgDesc.text = "小米/华为/OPPO等厂商特有，后台也能弹出界面"
+        bgDesc.textSize = 13f
+        bgDesc.setTextColor(0xFF888888.toInt())
+        val bgBtnRow = LinearLayout(act)
+        bgBtnRow.orientation = LinearLayout.HORIZONTAL
+        bgBtnRow.gravity = android.view.Gravity.END
+        val bgTutorialBtn = Button(act)
+        bgTutorialBtn.text = "查看教程"
+        bgTutorialBtn.setOnClickListener {
+            AlertDialog.Builder(act)
+                .setTitle("后台弹出界面权限教程")
+                .setMessage(
+                    "这是小米/华为/OPPO等厂商的特殊权限。\n\n" +
+                    "开启方法：\n" +
+                    "1. 打开手机「设置」\n" +
+                    "2. 找到「应用管理」或「应用与权限」\n" +
+                    "3. 找到「亲情守护」\n" +
+                    "4. 找到「权限管理」\n" +
+                    "5. 找到「后台弹出界面」设为「允许」\n" +
+                    "6. 找到「锁屏显示」设为「允许」\n\n" +
+                    "不同品牌路径略有差异"
+                )
+                .setPositiveButton("知道了", null)
+                .show()
+        }
+        val bgOpenBtn = Button(act)
+        bgOpenBtn.text = "去设置"
+        bgOpenBtn.setOnClickListener {
+            act.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${act.packageName}")
             })
-        } catch (_: Exception) {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
         }
-    }
+        bgBtnRow.addView(bgTutorialBtn)
+        bgBtnRow.addView(bgOpenBtn)
+        bgRow.addView(bgName)
+        bgRow.addView(bgDesc)
+        bgRow.addView(bgBtnRow)
+        container.addView(bgRow)
 
-    private fun showNotificationTutorial() {
-        val brand = Build.MANUFACTURER.lowercase()
-        val brandGuide = when {
-            brand.contains("xiaomi") || brand.contains("redmi") ->
-                "【小米/红米 MIUI】\n1. 设置 → 通知管理 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏通知」→ 全部显示\n4. 开启「横幅通知」→ 允许\n5. 优先级设为「紧急」"
-            brand.contains("huawei") || brand.contains("honor") ->
-                "【华为/荣耀 EMUI/鸿蒙】\n1. 设置 → 通知 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏通知」→ 显示全部\n4. 开启「横幅通知」\n5. 通知方式设为「紧急」"
-            brand.contains("oppo") || brand.contains("realme") || brand.contains("oneplus") ->
-                "【OPPO/Realme/一加 ColorOS】\n1. 设置 → 通知与状态栏 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏通知」\n4. 开启「横幅通知」\n5. 重要性设为「紧急」"
-            brand.contains("vivo") || brand.contains("iqoo") ->
-                "【Vivo/iQOO FunTouch】\n1. 设置 → 通知与状态栏 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏通知」→ 显示通知\n4. 开启「横幅通知」\n5. 优先级设为「紧急」"
-            brand.contains("samsung") ->
-                "【三星 OneUI】\n1. 设置 → 通知 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏通知」\n4. 通知类别设为「紧急」"
-            brand.contains("meizu") ->
-                "【魅族 Flyme】\n1. 设置 → 通知管理 → 亲情守护\n2. 开启「允许通知」\n3. 开启「锁屏显示」\n4. 开启「横幅通知」\n5. 优先级设为「紧急」"
-            else ->
-                "【通用设置方法】\n1. 设置 → 应用管理 → 亲情守护\n2. 点击「通知」\n3. 开启「允许通知」\n4. 开启「锁屏通知」\n5. 开启「横幅通知」\n6. 优先级设为「紧急」"
+        // 3. 电池优化白名单
+        val batRow = LinearLayout(act)
+        batRow.orientation = LinearLayout.HORIZONTAL
+        batRow.setPadding(0, 24, 0, 0)
+        val batName = TextView(act)
+        batName.text = "🔋 电池优化\n允许后台接收报警推送"
+        batName.textSize = 15f
+        batName.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        val batBtn = Button(act)
+        batBtn.text = if (batteryGranted) "✅ 已开启" else "去设置"
+        batBtn.isEnabled = !batteryGranted
+        batBtn.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                act.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:${act.packageName}")
+                })
+            }
         }
-        AlertDialog.Builder(this)
-            .setTitle("🔔 通知设置教程")
-            .setMessage(
-                "跌倒报警需要通知权限才能弹出！\n\n" +
-                brandGuide +
-                "\n\n💡 所有通知类型都要开，否则老人跌倒时可能看不到报警！"
-            )
-            .setPositiveButton("知道了", null)
-            .show()
-    }
+        batRow.addView(batName)
+        batRow.addView(batBtn)
+        container.addView(batRow)
 
+        // 4. 开机自启
+        val asRow = LinearLayout(act)
+        asRow.orientation = LinearLayout.VERTICAL
+        asRow.setPadding(0, 24, 0, 0)
+        val asTitleRow = LinearLayout(act)
+        asTitleRow.orientation = LinearLayout.HORIZONTAL
+        val asName = TextView(act)
+        asName.text = "🚀 开机自启"
+        asName.textSize = 15f
+        val asBtn = Button(act)
+        asBtn.text = "去设置"
+        asBtn.setOnClickListener { act.openAutoStartSettings() }
+        asTitleRow.addView(asName)
+        asTitleRow.addView(asBtn)
+        val asDesc = TextView(act)
+        asDesc.text = "⚠️ 建议开启！手机重启后可自动接收报警"
+        asDesc.textSize = 13f
+        asDesc.setTextColor(0xFFFF9800.toInt())
+        asRow.addView(asTitleRow)
+        asRow.addView(asDesc)
+        container.addView(asRow)
+
+        // 5. 通知设置
+        val notifRow = LinearLayout(act)
+        notifRow.orientation = LinearLayout.VERTICAL
+        notifRow.setPadding(0, 24, 0, 0)
+        val notifTitleRow = LinearLayout(act)
+        notifTitleRow.orientation = LinearLayout.HORIZONTAL
+        val notifName = TextView(act)
+        notifName.text = "🔔 通知设置"
+        notifName.textSize = 15f
+        val notifBtn = Button(act)
+        notifBtn.text = "去设置"
+        notifBtn.setOnClickListener { act.openNotificationSettings() }
+        notifTitleRow.addView(notifName)
+        notifTitleRow.addView(notifBtn)
+        val notifDesc = TextView(act)
+        notifDesc.text = "⚠️ 必须开启「锁屏通知」「横幅通知」！否则跌倒报警弹不出来"
+        notifDesc.textSize = 13f
+        notifDesc.setTextColor(0xFFD32F2F.toInt())
+        val notifTutorialBtn = Button(act)
+        notifTutorialBtn.text = "查看教程"
+        notifTutorialBtn.setOnClickListener { act.showNotificationTutorial() }
+        notifRow.addView(notifTitleRow)
+        notifRow.addView(notifDesc)
+        notifRow.addView(notifTutorialBtn)
+        container.addView(notifRow)
+
+        card.addView(container)
+        return card
+    }
     private fun requestAllPermissions() {
         val missing = permissionItems
             .filter { ContextCompat.checkSelfPermission(this, it.permission) != PackageManager.PERMISSION_GRANTED }
@@ -437,21 +341,8 @@ class PermissionActivity : AppCompatActivity() {
 
         if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing)
-            return  // 等待回调，不继续执行
-        }
-
-        // 运行时权限全部已授权，检查特殊权限
-        var allReady = true
-
-        // 检查悬浮窗权限
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(this)) {
-                Toast.makeText(this, "悬浮窗权限未授权，请手动开启", Toast.LENGTH_LONG).show()
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
-                    data = Uri.parse("package:$packageName")
-                })
-                allReady = false
-            }
+        } else {
+            Toast.makeText(this, "运行时权限已授权", Toast.LENGTH_SHORT).show()
         }
 
         // 检查电池优化
@@ -468,13 +359,11 @@ class PermissionActivity : AppCompatActivity() {
                     }
                     .setNegativeButton("稍后", null)
                     .show()
-                allReady = false
+                return
             }
         }
 
-        if (allReady) {
-            Toast.makeText(this, "所有权限已就绪！", Toast.LENGTH_LONG).show()
-        }
+        Toast.makeText(this, "所有权限已就绪！", Toast.LENGTH_LONG).show()
     }
 
     private fun openAppSettings() {
@@ -490,5 +379,52 @@ class PermissionActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshUI()
+    }
+
+
+    private fun openAutoStartSettings() {
+        val intents = listOfNotNull(
+            Intent().apply { component = android.content.ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity") },
+            Intent().apply { component = android.content.ComponentName("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity") },
+            Intent().apply { component = android.content.ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity") },
+            Intent().apply { component = android.content.ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity") },
+            Intent().apply { component = android.content.ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity") },
+            Intent().apply { component = android.content.ComponentName("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity") },
+            Intent().apply { component = android.content.ComponentName("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity") },
+            Intent().apply { component = android.content.ComponentName("com.meizu.safe", "com.meizu.safe.permission.SmartPermissionsActivity") },
+            Intent().apply { component = android.content.ComponentName("com.lenovo.security", "com.lenovo.security.firewall.StartupActivity") },
+            Intent().apply { component = android.content.ComponentName("com.zte.heartyservice", "com.zte.heartyservice.autoboot.BootAppListActivity") }
+        )
+        for (intent in intents) {
+            try { startActivity(intent); return } catch (_: Exception) { }
+        }
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:${packageName}") }) } catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+    }
+
+    private fun openNotificationSettings() {
+        val notifIntents = listOfNotNull(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply { putExtra(Settings.EXTRA_APP_PACKAGE, packageName); putExtra(Settings.EXTRA_CHANNEL_ID, "emergency") } else null,
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) putExtra(Settings.EXTRA_APP_PACKAGE, packageName) else { putExtra("app_package", packageName); putExtra("app_uid", applicationInfo.uid) } }
+        )
+        for (intent in notifIntents) { try { startActivity(intent); return } catch (_: Exception) { } }
+        try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply { data = Uri.parse("package:${packageName}") }) } catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+    }
+
+    private fun showNotificationTutorial() {
+        val brand = Build.MANUFACTURER.lowercase()
+        val guide = when {
+            brand.contains("xiaomi") || brand.contains("redmi") -> "【小米/红米 MIUI】\n1. 设置 → 通知管理 → 亲情守护\n2. 开启「允许通知」「锁屏通知→全部显示」「横幅通知→允许」「优先级→紧急」"
+            brand.contains("huawei") || brand.contains("honor") -> "【华为/荣耀 EMUI/鸿蒙】\n1. 设置 → 通知 → 亲情守护\n2. 开启「允许通知」「锁屏通知→显示全部」「横幅通知」「通知方式→紧急」"
+            brand.contains("oppo") || brand.contains("realme") || brand.contains("oneplus") -> "【OPPO/Realme/一加 ColorOS】\n1. 设置 → 通知与状态栏 → 亲情守护\n2. 开启所有通知类型，重要性设为「紧急」"
+            brand.contains("vivo") || brand.contains("iqoo") -> "【Vivo/iQOO FunTouch】\n1. 设置 → 通知与状态栏 → 亲情守护\n2. 开启所有通知，优先级设为「紧急」"
+            brand.contains("samsung") -> "【三星 OneUI】\n1. 设置 → 通知 → 亲情守护\n2. 开启「允许通知」「锁屏通知」「通知类别→紧急」"
+            brand.contains("meizu") -> "【魅族 Flyme】\n1. 设置 → 通知管理 → 亲情守护\n2. 开启「允许通知」「锁屏显示」「横幅通知」「优先级→紧急」"
+            else -> "【通用设置】\n1. 设置 → 应用管理 → 亲情守护 → 通知\n2. 开启所有通知，优先级设为「紧急」"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("🔔 通知设置教程")
+            .setMessage("跌倒报警需要通知权限才能弹出！\n\n$guide\n\n💡 所有通知类型都要开！")
+            .setPositiveButton("知道了", null)
+            .show()
     }
 }

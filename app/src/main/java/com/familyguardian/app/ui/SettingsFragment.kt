@@ -50,6 +50,11 @@ class SettingsFragment : Fragment() {
         
         // 关于按钮
         b.btnAbout.setOnClickListener { showAbout() }
+
+        // 意见反馈
+        b.btnFeedback.setOnClickListener {
+            startActivity(android.content.Intent(requireContext(), com.familyguardian.app.feedback.FeedbackActivity::class.java))
+        }
         
         // 更新绑定状态显示
         updateBindingStatus()

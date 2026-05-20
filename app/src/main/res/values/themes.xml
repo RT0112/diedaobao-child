@@ -5,4 +5,11 @@
         <item name="colorPrimaryDark">@color/primary_dark</item>
         <item name="colorAccent">@color/accent</item>
     </style>
+
+    <!-- NoActionBar 变体，供需要自定义 Toolbar 的 Activity 使用 -->
+    <style name="Theme.FamilyGuardian.NoActionBar" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+    </style>
 </resources>

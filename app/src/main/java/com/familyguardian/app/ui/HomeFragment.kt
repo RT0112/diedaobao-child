@@ -10,6 +10,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.data.AppDatabase
+import androidx.core.app.NotificationCompat
 import com.familyguardian.app.data.FallNotification
 import com.familyguardian.app.databinding.FragmentHomeBinding
 import com.familyguardian.app.cloud.WSClient
@@ -268,74 +269,91 @@ class HomeFragment : Fragment() {
     
     private fun showFallNotification(notification: FallNotification) {
         try {
-            val channelId = "fall_alert"
             val manager = requireContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             
-            // 创建通知渠道（API 26+）
+            // 读取强制弹窗通知开关
+            val prefs = requireContext().getSharedPreferences("family_guardian_settings", 0)
+            val forcePopup = prefs.getBoolean("force_popup_notification", true)
+            
+            // 创建两个独立渠道：full_screen（强制弹窗用）和 fall_alert（普通通知用）
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val channel = android.app.NotificationChannel(
-                    channelId, "跌倒警报", android.app.NotificationManager.IMPORTANCE_HIGH
+                val fullScreenChannel = android.app.NotificationChannel(
+                    "full_screen_channel", "跌倒警报（全屏）", android.app.NotificationManager.IMPORTANCE_MAX
+                ).apply {
+                    description = "跌倒告警全屏弹窗，优先级最高"
+                    enableVibration(true)
+                    enableLights(true)
+                    setBypassDnd(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+                }
+                val normalChannel = android.app.NotificationChannel(
+                    "fall_alert", "跌倒警报", android.app.NotificationManager.IMPORTANCE_HIGH
                 ).apply {
                     description = "老人跌倒时接收紧急通知"
                     enableVibration(true)
                     enableLights(true)
                 }
-                manager.createNotificationChannel(channel)
+                manager.createNotificationChannel(fullScreenChannel)
+                manager.createNotificationChannel(normalChannel)
             }
             
-            // 读取强制弹窗通知开关
-            val prefs = requireContext().getSharedPreferences("family_guardian_settings", 0)
-            val forcePopup = prefs.getBoolean("force_popup_notification", true)
-            Log.d("HomeFragment", "showFallNotification: forcePopup=$forcePopup")
-            
-            // 点击通知打开内置地图显示跌倒位置
-            val mapIntent = android.content.Intent(requireContext(), com.familyguardian.app.ui.MapActivity::class.java).apply {
+            // 点击通知打开跌倒位置地图（view_fall模式）
+            val intent = android.content.Intent(requireContext(), MapActivity::class.java).apply {
                 putExtra("mode", "view_fall")
-                putExtra("latitude", notification.latitude)
-                putExtra("longitude", notification.longitude)
-                putExtra("title", notification.elderName + "跌倒位置")
-                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("fallLat", notification.latitude)
+                putExtra("fallLng", notification.longitude)
+                putExtra("fallTime", notification.timestamp)
+                putExtra("fallName", notification.elderName)
             }
-            val pendingIntent = android.app.PendingIntent.getActivity(
-                requireContext(), notification.eventId.hashCode(), mapIntent,
+            
+            val contentIntent = android.app.PendingIntent.getActivity(
+                requireContext(), 0, intent,
                 android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
             )
-            Log.d("HomeFragment", "showFallNotification: pendingIntent created")
-            
-            val builder = android.app.Notification.Builder(requireContext(), channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
-                .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
-                .setPriority(android.app.Notification.PRIORITY_HIGH)
-                .setAutoCancel(true)
-                .setContentIntent(pendingIntent)
-                .setDefaults(android.app.Notification.DEFAULT_ALL)
             
             // 强制弹窗模式：使用全屏Intent（类似来电），绕过MIUI静默通知
-            if (forcePopup) {
-                val fullScreenMapIntent = android.content.Intent(requireContext(), com.familyguardian.app.ui.MapActivity::class.java).apply {
-                    putExtra("mode", "view_fall")
-                    putExtra("latitude", notification.latitude)
-                    putExtra("longitude", notification.longitude)
-                    putExtra("title", notification.elderName + "跌倒位置")
-                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            val useFullScreen = forcePopup && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+                    android.provider.Settings.canDrawOverlays(requireContext())
+            
+            if (useFullScreen) {
+                // 全屏弹窗模式：参照老人端实现，使用 NotificationCompat + PRIORITY_MAX + CATEGORY_ALARM + ongoing
+                if (!android.provider.Settings.canDrawOverlays(requireContext())) {
+                    android.widget.Toast.makeText(requireContext(), "请先在权限设置中开启「锁屏显示」权限", android.widget.Toast.LENGTH_LONG).show()
                 }
-                val fullScreenPendingIntent = android.app.PendingIntent.getActivity(
-                    requireContext(), notification.eventId.hashCode() + 1, fullScreenMapIntent,
+                val fullScreenIntent = android.app.PendingIntent.getActivity(
+                    requireContext(), 1, intent,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
-                builder.setFullScreenIntent(fullScreenPendingIntent, true)
-                Log.d("HomeFragment", "showFallNotification: fullScreenIntent enabled -> MapActivity")
+                val notif = NotificationCompat.Builder(requireContext(), "full_screen_channel")
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
+                    .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_ALARM)
+                    .setOngoing(true)
+                    .setAutoCancel(false)
+                    .setFullScreenIntent(fullScreenIntent, true)
+                    .setContentIntent(contentIntent)
+                    .setSound(android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION))
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .build()
+                manager.notify(notification.eventId.hashCode(), notif)
+            } else {
+                // 普通通知模式
+                val notif = NotificationCompat.Builder(requireContext(), "fall_alert")
+                    .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                    .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
+                    .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true)
+                    .setContentIntent(contentIntent)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .build()
+                manager.notify(notification.eventId.hashCode(), notif)
             }
-            
-            val notif = builder.build()
-            Log.d("HomeFragment", "showFallNotification: notification built, calling notify()")
-            
-            manager.notify(notification.eventId.hashCode(), notif)
-            Log.d("HomeFragment", "showFallNotification: manager.notify() SUCCESS")
         } catch (e: Exception) {
             Log.e("HomeFragment", "系统通知发送失败: ${e.message}")
-            Log.e("HomeFragment", android.util.Log.getStackTraceString(e))
         }
     }
     

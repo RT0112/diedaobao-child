@@ -1,7 +1,6 @@
 package com.familyguardian.app.ui
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -107,8 +106,13 @@ class HistoryFragment : Fragment() {
             .setMessage(message)
             .setPositiveButton("📍 查看位置") { _, _ ->
                 if (notification.latitude != null && notification.longitude != null) {
-                    val mapUrl = "https://uri.amap.com/marker?position=${notification.longitude},${notification.latitude}&name=跌倒位置"
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(mapUrl)))
+                    val intent = Intent(requireContext(), MapActivity::class.java).apply {
+                        putExtra("mode", "view_fall")
+                        putExtra("fallLat", notification.latitude)
+                        putExtra("fallLng", notification.longitude)
+                        putExtra("fallTime", timeStr)
+                    }
+                    startActivity(intent)
                 } else {
                     Toast.makeText(requireContext(), "未记录位置信息", Toast.LENGTH_SHORT).show()
                 }

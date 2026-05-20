@@ -56,6 +56,12 @@
             android:theme="@style/Theme.FamilyGuardian"
             android:parentActivityName=".MainActivity" />
 
+        <activity
+            android:name=".feedback.FeedbackActivity"
+            android:exported="false"
+            android:label="意见反馈"
+            android:theme="@style/Theme.FamilyGuardian.NoActionBar" />
+
     </application>
 
 </manifest>

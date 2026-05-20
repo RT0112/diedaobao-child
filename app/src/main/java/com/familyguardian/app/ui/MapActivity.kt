@@ -12,10 +12,11 @@ import com.familyguardian.app.cloud.CloudBaseClient
 import kotlinx.coroutines.launch
 
 /**
- * 地图Activity — 三种模式
+ * 地图Activity — 四种模式
  * - view: 查看老人位置+所有围栏
  * - add: 拖拽画圆添加围栏
  * - view_fence: 查看单个围栏详情
+ * - view_fall: 查看跌倒事件位置
  */
 class MapActivity : AppCompatActivity() {
 
@@ -116,7 +117,7 @@ class MapActivity : AppCompatActivity() {
                 "add" -> "➕ 添加围栏"
                 "edit" -> "✏️ 编辑围栏"
                 "view_fence" -> intent.getStringExtra("fenceName") ?: "围栏详情"
-                "view_fall" -> intent.getStringExtra("title") ?: "🚨 跌倒位置"
+                "view_fall" -> "🚨 跌倒位置"
                 else -> "📍 老人位置"
             }
             setDisplayHomeAsUpEnabled(true)
@@ -450,20 +451,6 @@ function showSingleFence(name,lat,lng,radius,isBreached){
     }
 
     // ========================================
-    // 跌倒位置查看模式
-    // ========================================
-    private fun setupViewFallMode() {
-        val lat = intent.getDoubleExtra("latitude", 0.0)
-        val lng = intent.getDoubleExtra("longitude", 0.0)
-        val title = intent.getStringExtra("title") ?: "跌倒位置"
-        if (lat == 0.0 && lng == 0.0) {
-            Toast.makeText(this, "未获取到跌倒位置", Toast.LENGTH_SHORT).show()
-            return
-        }
-        evalJs("if(map){var g=wgs2gcj($lat,$lng);L.circleMarker([g[0],g[1]],{radius:10,color:'#f44336',fillColor:'#f44336',fillOpacity:0.8}).addTo(map).bindPopup('<b>$title</b><br>经度: ${"%.6f".format(lng)}<br>纬度: ${"%.6f".format(lat)}').openPopup();map.setView([g[0],g[1]],16)}")
-    }
-
-    // ========================================
     // 查看单个围栏模式
     // ========================================
     private fun setupViewFenceMode() {
@@ -484,6 +471,38 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                         "if(map){var g=wgs2gcj(${loc.latitude},${loc.longitude});L.circleMarker([g[0],g[1]]," +
                         "{radius:8,color:'#F44336',fillColor:'#F44336',fillOpacity:1})" +
                         ".addTo(map).bindPopup('${esc(status.name)}').openPopup();}"
+                    )
+                }
+            } catch (_: Exception) { }
+        }
+    }
+
+    // ========================================
+    // 查看跌倒位置模式：显示跌倒事件标记+老人当前位置
+    // ========================================
+    private fun setupViewFallMode() {
+        val lat = intent.getDoubleExtra("fallLat", 0.0)
+        val lng = intent.getDoubleExtra("fallLng", 0.0)
+        val time = intent.getStringExtra("fallTime") ?: ""
+
+        if (lat == 0.0 && lng == 0.0) {
+            Toast.makeText(this, "坐标无效", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 显示跌倒位置标记
+        evalJs("setElderLocation($lat,$lng,'🚨 跌倒位置','$time')")
+
+        // 叠加载老人当前位置
+        lifecycleScope.launch {
+            try {
+                val status = CloudBaseClient.getElderStatus()
+                if (status != null && status.lastLocation != null) {
+                    val loc = status.lastLocation
+                    evalJs(
+                        "if(map){var g=wgs2gcj(${loc.latitude},${loc.longitude});L.circleMarker([g[0],g[1]]," +
+                        "{radius:8,color:'#4CAF50',fillColor:'#4CAF50',fillOpacity:1})" +
+                        ".addTo(map).bindPopup('${esc(status.name)} (当前)').openPopup();}"
                     )
                 }
             } catch (_: Exception) { }
