@@ -11,8 +11,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.cloud.CloudBaseClient.GeofenceInfo
+import com.familyguardian.app.cloud.WSClient
+import com.familyguardian.app.cloud.WSClient.WSEvent
 import com.familyguardian.app.databinding.FragmentGeofenceBinding
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.filterIsInstance
 
 /**
  * 电子围栏页面 v2.0 (v0.6.4 修复版)
@@ -55,6 +58,22 @@ class GeofenceFragment : Fragment() {
         // 刷新
         b.swipeRefresh.setOnRefreshListener { 
             if (isAdded) loadFences() 
+        }
+        
+        // 订阅围栏越界告警推送（根因修复：之前从未订阅 WSClient 的 geofence_breach 事件）
+        viewLifecycleOwner.lifecycleScope.launch {
+            WSClient.events.filterIsInstance<WSEvent.GeofenceBreach>().collect { breach ->
+                if (!isAdded) return@collect
+                val breachNames = breach.breaches.joinToString("、")
+                android.app.AlertDialog.Builder(requireContext())
+                    .setTitle("⚠️ 围栏告警")
+                    .setMessage("${breach.elderName}越过了以下围栏：\n$breachNames")
+                    .setPositiveButton("查看围栏") { _, _ ->
+                        if (isAdded) loadFences()
+                    }
+                    .setNegativeButton("知道了", null)
+                    .show()
+            }
         }
         
         // 加载围栏

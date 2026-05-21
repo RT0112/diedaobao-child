@@ -88,30 +88,32 @@ object CloudBaseClient {
                     addProperty("phone", "")
                     addProperty("role", "guardian")
                 }
-                
+
                 val request = Request.Builder()
                     .url("$BASE_URL/user-register")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
                     .build()
-                
+
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    AppLogger.e(TAG, "autoRegister failed: ${response.code}")
-                    return@withContext false
-                }
-                
-                val responseBody = response.body?.string()
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                val newUserId = json.get("userId")?.asString
-                
-                if (newUserId != null) {
-                    userId = newUserId
-                    prefs.edit().putString(KEY_USER_ID, newUserId).apply()
-                    Log.i(TAG, "Guardian registered: $newUserId")
-                    true
-                } else {
-                    AppLogger.e(TAG, "autoRegister: no userId in response")
-                    false
+                response.use {
+                    if (!response.isSuccessful) {
+                        AppLogger.e(TAG, "autoRegister failed: ${response.code}")
+                        return@withContext false
+                    }
+
+                    val responseBody = response.body?.string()
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    val newUserId = json.get("userId")?.asString
+
+                    if (newUserId != null) {
+                        userId = newUserId
+                        prefs.edit().putString(KEY_USER_ID, newUserId).apply()
+                        Log.i(TAG, "Guardian registered: $newUserId")
+                        true
+                    } else {
+                        AppLogger.e(TAG, "autoRegister: no userId in response")
+                        false
+                    }
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "autoRegister error", e)
@@ -280,6 +282,12 @@ object CloudBaseClient {
      * 调用云函数在老人用户文档上设置 pull flag
      * 老人端每10秒轮询 poll_pull，发现请求后立即上传最新GPS
      */
+    /**
+     * 根因修复：OkHttp Response 必须被关闭（或 body 被读取）才能将连接归还连接池。
+     * 原代码在 !response.isSuccessful 时直接 return，未关闭 response，导致连接泄漏。
+     * 第一次请求后连接池中的连接处于占用状态，第二次请求复用该连接时超时。
+     * 修复方式：使用 response.use { ... } 确保无论成功/失败/异常均自动关闭 response。
+     */
     suspend fun requestElderLocation(): Long? {
         return withContext(Dispatchers.IO) {
             try {
@@ -287,27 +295,29 @@ object CloudBaseClient {
                 val body = JsonObject().apply {
                     addProperty("elderId", eid)
                 }
-                
+
                 val request = Request.Builder()
                     .url("$BASE_URL/request-elder-location")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
                     .build()
-                
+
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    AppLogger.e(TAG, "requestElderLocation failed: ${response.code}")
-                    return@withContext null
+                response.use {
+                    if (!response.isSuccessful) {
+                        AppLogger.e(TAG, "requestElderLocation failed: ${response.code}")
+                        return@withContext null
+                    }
+
+                    val responseBody = response.body?.string()
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    val success = json.get("success")?.asBoolean ?: false
+                    if (!success) {
+                        AppLogger.w(TAG, "requestElderLocation: ${json.get("message")?.asString}")
+                        return@withContext null
+                    }
+
+                    json.get("requestTime")?.asLong
                 }
-                
-                val responseBody = response.body?.string()
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                val success = json.get("success")?.asBoolean ?: false
-                if (!success) {
-                    AppLogger.w(TAG, "requestElderLocation: ${json.get("message")?.asString}")
-                    return@withContext null
-                }
-                
-                json.get("requestTime")?.asLong
             } catch (e: Exception) {
                 AppLogger.e(TAG, "requestElderLocation error", e)
                 null
@@ -316,29 +326,37 @@ object CloudBaseClient {
     }
     
     // ========== 老人状态 ==========
-    
+
+    /**
+     * 根因修复：OkHttp Response 必须被关闭（或 body 被读取）才能将连接归还连接池。
+     * 原代码在 !response.isSuccessful 时直接 return，未关闭 response，导致连接泄漏。
+     * 连接池中的连接处于占用状态，第二次请求复用该连接时超时。
+     * 修复方式：使用 response.use { ... } 确保无论成功/失败/异常均自动关闭 response。
+     */
     suspend fun getElderStatus(): ElderStatus? {
         return withContext(Dispatchers.IO) {
             try {
                 val eid = elderId ?: return@withContext null
                 val url = "$BASE_URL/get-status?elderId=$eid"
-                
+
                 val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) return@withContext null
-                
-                val responseBody = response.body?.string()
-                Log.i(TAG, "getElderStatus response: $responseBody")
-                
-                // 先检查code字段
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                val code = json.get("code")?.asInt ?: 0
-                if (code != 200) {
-                    AppLogger.w(TAG, "getElderStatus error code=$code: ${json.get("message")?.asString}")
-                    return@withContext null
+                response.use {
+                    if (!response.isSuccessful) return@withContext null
+
+                    val responseBody = response.body?.string()
+                    Log.i(TAG, "getElderStatus response: $responseBody")
+
+                    // 先检查code字段
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    val code = json.get("code")?.asInt ?: 0
+                    if (code != 200) {
+                        AppLogger.w(TAG, "getElderStatus error code=$code: ${json.get("message")?.asString}")
+                        return@withContext null
+                    }
+
+                    gson.fromJson(json, ElderStatus::class.java)
                 }
-                
-                gson.fromJson(json, ElderStatus::class.java)
             } catch (e: Exception) {
                 AppLogger.e(TAG, "getElderStatus error", e)
                 null
@@ -354,34 +372,36 @@ object CloudBaseClient {
                 val eid = elderId ?: return@withContext emptyList()
                 Log.i(TAG, "getFallHistory: elderId=$eid, limit=$limit")
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$limit"
-                
+
                 val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    AppLogger.e(TAG, "getFallHistory HTTP error: ${response.code}")
-                    return@withContext emptyList()
+                response.use {
+                    if (!response.isSuccessful) {
+                        AppLogger.e(TAG, "getFallHistory HTTP error: ${response.code}")
+                        return@withContext emptyList()
+                    }
+
+                    val responseBody = response.body?.string()
+                    Log.i(TAG, "getFallHistory response: $responseBody")
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+
+                    // 检查云函数返回码
+                    val code = json.get("code")?.asInt ?: 0
+                    if (code != 200) {
+                        AppLogger.e(TAG, "getFallHistory server error: code=$code, msg=${json.get("message")?.asString}")
+                        return@withContext emptyList()
+                    }
+
+                    val eventsArray = json.getAsJsonArray("events")
+                    if (eventsArray == null) {
+                        AppLogger.w(TAG, "getFallHistory: no events array in response")
+                        return@withContext emptyList()
+                    }
+
+                    val events = eventsArray.map { gson.fromJson(it, FallEvent::class.java) }
+                    Log.i(TAG, "getFallHistory: got ${events.size} events for elderId=$eid")
+                    events
                 }
-                
-                val responseBody = response.body?.string()
-                Log.i(TAG, "getFallHistory response: $responseBody")
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                
-                // 检查云函数返回码
-                val code = json.get("code")?.asInt ?: 0
-                if (code != 200) {
-                    AppLogger.e(TAG, "getFallHistory server error: code=$code, msg=${json.get("message")?.asString}")
-                    return@withContext emptyList()
-                }
-                
-                val eventsArray = json.getAsJsonArray("events")
-                if (eventsArray == null) {
-                    AppLogger.w(TAG, "getFallHistory: no events array in response")
-                    return@withContext emptyList()
-                }
-                
-                val events = eventsArray.map { gson.fromJson(it, FallEvent::class.java) }
-                Log.i(TAG, "getFallHistory: got ${events.size} events for elderId=$eid")
-                events
             } catch (e: Exception) {
                 AppLogger.e(TAG, "getFallHistory error", e)
                 emptyList()
@@ -395,6 +415,10 @@ object CloudBaseClient {
      * 获取围栏列表
      * 先从缓存取，然后异步更新
      */
+    /**
+     * 根因修复：OkHttp Response 必须被关闭才能将连接归还连接池。
+     * 使用 response.use { ... } 确保无论成功/失败/异常均自动关闭 response。
+     */
     suspend fun getGeofences(): List<GeofenceInfo> {
         return withContext(Dispatchers.IO) {
             try {
@@ -404,50 +428,52 @@ object CloudBaseClient {
                     addProperty("elderId", eid)
                     addProperty("creatorId", userId ?: "")
                 }
-                
+
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
                     .build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    AppLogger.e(TAG, "getGeofences failed: ${response.code}")
-                    return@withContext getCachedGeofences()
-                }
-                
-                val responseBody = response.body?.string()
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                if (json.get("success")?.asBoolean != true) {
-                    AppLogger.e(TAG, "getGeofences server error: ${json.get("message")?.asString}")
-                    return@withContext getCachedGeofences()
-                }
-                val fencesArray = json.getAsJsonArray("fences")
-                
-                val fences = fencesArray.mapNotNull { element ->
-                    try {
-                        val obj = element.asJsonObject
-                        val id = obj.get("id")?.asString ?: return@mapNotNull null
-                        val name = obj.get("name")?.asString ?: "未命名围栏"
-                        val latitude = obj.get("latitude")?.asDouble ?: return@mapNotNull null
-                        val longitude = obj.get("longitude")?.asDouble ?: return@mapNotNull null
-                        val radius = obj.get("radius")?.asInt ?: 200
-                        GeofenceInfo(
-                            id = id,
-                            name = name,
-                            latitude = latitude,
-                            longitude = longitude,
-                            radius = radius,
-                            isBreached = obj.get("isBreached")?.asBoolean ?: false,
-                            createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
-                        )
-                    } catch (e: Exception) {
-                        AppLogger.e(TAG, "Failed to parse fence: ${e.message}")
-                        null
+                response.use {
+                    if (!response.isSuccessful) {
+                        AppLogger.e(TAG, "getGeofences failed: ${response.code}")
+                        return@withContext getCachedGeofences()
                     }
+
+                    val responseBody = response.body?.string()
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    if (json.get("success")?.asBoolean != true) {
+                        AppLogger.e(TAG, "getGeofences server error: ${json.get("message")?.asString}")
+                        return@withContext getCachedGeofences()
+                    }
+                    val fencesArray = json.getAsJsonArray("fences")
+
+                    val fences = fencesArray.mapNotNull { element ->
+                        try {
+                            val obj = element.asJsonObject
+                            val id = obj.get("id")?.asString ?: return@mapNotNull null
+                            val name = obj.get("name")?.asString ?: "未命名围栏"
+                            val latitude = obj.get("latitude")?.asDouble ?: return@mapNotNull null
+                            val longitude = obj.get("longitude")?.asDouble ?: return@mapNotNull null
+                            val radius = obj.get("radius")?.asInt ?: 200
+                            GeofenceInfo(
+                                id = id,
+                                name = name,
+                                latitude = latitude,
+                                longitude = longitude,
+                                radius = radius,
+                                isBreached = obj.get("isBreached")?.asBoolean ?: false,
+                                createdAt = obj.get("createdAt")?.asLong ?: System.currentTimeMillis()
+                            )
+                        } catch (e: Exception) {
+                            AppLogger.e(TAG, "Failed to parse fence: ${e.message}")
+                            null
+                        }
+                    }
+
+                    cacheGeofences(fences)
+                    fences
                 }
-                
-                cacheGeofences(fences)
-                fences
             } catch (e: Exception) {
                 AppLogger.e(TAG, "getGeofences error", e)
                 getCachedGeofences()
@@ -653,39 +679,45 @@ object CloudBaseClient {
     /**
      * 获取跌倒事件列表（原始JSON格式，供反馈功能使用）
      */
+    /**
+     * 根因修复：OkHttp Response 必须被关闭才能将连接归还连接池。
+     * 使用 response.use { ... } 确保无论成功/失败/异常均自动关闭 response。
+     */
     suspend fun getFallEvents(count: Int = 20): List<org.json.JSONObject> {
         return withContext(Dispatchers.IO) {
             try {
                 val eid = elderId ?: return@withContext emptyList()
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$count"
-                
+
                 val request = Request.Builder().url(url).get().build()
                 val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "getFallEvents failed: ${response.code}")
-                    return@withContext emptyList()
-                }
-                
-                val responseBody = response.body?.string() ?: ""
-                val json = gson.fromJson(responseBody, com.google.gson.JsonObject::class.java)
-                val code = json.get("code")?.asInt ?: 0
-                if (code != 200) {
-                    Log.e(TAG, "getFallEvents error: code=$code")
-                    return@withContext emptyList()
-                }
-                
-                val eventsArray = json.getAsJsonArray("events")
-                val events = mutableListOf<org.json.JSONObject>()
-                for (i in 0 until eventsArray.size()) {
-                    try {
-                        val eventJson = eventsArray[i].asJsonObject
-                        val jsonStr = gson.toJson(eventJson)
-                        events.add(org.json.JSONObject(jsonStr))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "getFallEvents parse error: ${e.message}")
+                response.use {
+                    if (!response.isSuccessful) {
+                        Log.e(TAG, "getFallEvents failed: ${response.code}")
+                        return@withContext emptyList()
                     }
+
+                    val responseBody = response.body?.string() ?: ""
+                    val json = gson.fromJson(responseBody, com.google.gson.JsonObject::class.java)
+                    val code = json.get("code")?.asInt ?: 0
+                    if (code != 200) {
+                        Log.e(TAG, "getFallEvents error: code=$code")
+                        return@withContext emptyList()
+                    }
+
+                    val eventsArray = json.getAsJsonArray("events")
+                    val events = mutableListOf<org.json.JSONObject>()
+                    for (i in 0 until eventsArray.size()) {
+                        try {
+                            val eventJson = eventsArray[i].asJsonObject
+                            val jsonStr = gson.toJson(eventJson)
+                            events.add(org.json.JSONObject(jsonStr))
+                        } catch (e: Exception) {
+                            Log.e(TAG, "getFallEvents parse error: ${e.message}")
+                        }
+                    }
+                    events
                 }
-                events
             } catch (e: Exception) {
                 Log.e(TAG, "getFallEvents error: ${e.message}")
                 emptyList()

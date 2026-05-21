@@ -81,15 +81,20 @@ object WSClient {
                 Log.i(TAG, "WebSocket 已连接")
                 isConnected = true
                 reconnectAttempts = 0
-                
-                // 认证
+
+                // 认证（含 elderId，服务器靠它把老人→家属的消息路由到正确的 WS 连接）
+                // 根因：如果只传 userId+role，服务器不知道这个家属要收哪个老人的 geofence_breach，
+                // 导致围栏告警推不到这个 WS 连接
                 val auth = JSONObject().apply {
                     put("type", "auth")
                     put("data", JSONObject().apply {
                         put("userId", userId)
                         put("role", "guardian")
+                        // 把绑定的 elderId 也告诉服务器，服务器用这个把老人事件路由到家属
+                        if (elderId != null) put("elderId", elderId)
                     })
                 }
+                Log.d(TAG, "WS auth: userId=$userId, elderId=$elderId")
                 webSocket.send(auth.toString())
             }
             
