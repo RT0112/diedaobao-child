@@ -233,6 +233,26 @@ object WSClient {
                     }
                 }
                 
+                "geofence_breach" -> {
+                    // 围栏越界告警推送
+                    val elderName = data?.optString("elderName", "老人") ?: "老人"
+                    val breachList = data?.optJSONArray("breaches")?.let { arr ->
+                        (0 until arr.length()).map { arr.getString(it) }
+                    } ?: emptyList()
+                    val ts = data?.optLong("timestamp", 0L) ?: 0L
+                    val eId = data?.optString("elderId", "") ?: ""
+                    Log.i(TAG, "⚠️ 收到围栏越界告警: $breachList")
+                    
+                    scope.launch {
+                        _events.emit(WSEvent.GeofenceBreach(
+                            elderName = elderName,
+                            breaches = breachList,
+                            timestamp = ts,
+                            elderId = eId
+                        ))
+                    }
+                }
+                
                 "error" -> {
                     Log.e(TAG, "WS错误: ${json.optString("message")}")
                 }
@@ -416,5 +436,13 @@ object WSClient {
         
         /** 协助取消 */
         object AssistCancel : WSEvent()
+        
+        /** 围栏越界告警 */
+        data class GeofenceBreach(
+            val elderName: String,
+            val breaches: List<String>,
+            val timestamp: Long,
+            val elderId: String
+        ) : WSEvent()
     }
 }

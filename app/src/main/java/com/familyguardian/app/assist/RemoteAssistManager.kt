@@ -111,6 +111,10 @@ class RemoteAssistManager(private val context: Context) {
                     is WSClient.WSEvent.LocationUpdate -> {
                         // 位置更新由 HomeFragment 处理，这里不处理
                     }
+
+                    is WSClient.WSEvent.GeofenceBreach -> {
+                        // 围栏越界由 HomeFragment 处理，这里不处理
+                    }
                 }
             }
         }

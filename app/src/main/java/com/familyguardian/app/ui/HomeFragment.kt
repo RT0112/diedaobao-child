@@ -357,6 +357,44 @@ class HomeFragment : Fragment() {
         }
     }
     
+    private fun showGeofenceBreachNotification(event: WSClient.WSEvent.GeofenceBreach) {
+        try {
+            val manager = requireContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    "geofence_alert", "围栏越界告警", android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "老人离开围栏区域时接收告警"
+                    enableVibration(true)
+                    enableLights(true)
+                }
+                manager.createNotificationChannel(channel)
+            }
+            
+            val fenceNames = event.breaches.joinToString("、")
+            val timeStr = if (event.timestamp > 0) {
+                java.text.SimpleDateFormat("HH:mm", java.util.Locale.CHINA).format(java.util.Date(event.timestamp))
+            } else ""
+            
+            val title = "⚠️ ${event.elderName}已离开围栏区域${if (timeStr.isNotEmpty()) " ($timeStr)" else ""}"
+            
+            val notif = NotificationCompat.Builder(requireContext(), "geofence_alert")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentTitle(title)
+                .setContentText(fenceNames)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .build()
+            manager.notify("geofence".hashCode(), notif)
+            
+            android.widget.Toast.makeText(requireContext(), "$title\n$fenceNames", android.widget.Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e("HomeFragment", "围栏通知发送失败: ${e.message}")
+        }
+    }
+    
     override fun onResume() {
         super.onResume()
         // 每次回到页面刷新状态（按需，不轮询）
@@ -406,6 +444,12 @@ class HomeFragment : Fragment() {
                         withContext(kotlinx.coroutines.Dispatchers.Main) {
                             loadElderStatus()
                         }
+                    }
+
+                    is WSClient.WSEvent.GeofenceBreach -> {
+                        Log.i("HomeFragment", "⚠️ WS收到围栏越界告警: ${event.breaches}")
+                        showGeofenceBreachNotification(event)
+                        loadElderStatus()
                     }
 
                     else -> { /* 其他事件由 RemoteAssistManager 处理 */ }
