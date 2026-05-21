@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * 地图Activity — 四种模式
@@ -26,6 +27,7 @@ class MapActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var currentMode = "view"
+    private var locationJob: kotlinx.coroutines.Job? = null  // 取消上一次位置获取
 
     /**
      * JS → Kotlin 桥接。
@@ -88,12 +90,20 @@ class MapActivity : AppCompatActivity() {
         webView = WebView(this).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             addJavascriptInterface(JsBridge(), "Android")
 
             webViewClient = object : WebViewClient() {
                 override fun onReceivedError(view: WebView?, code: Int, desc: String?, url: String?) {
                     AppLogger.e(TAG, "WebView错误: code=$code, desc=$desc")
                     webView.loadDataWithBaseURL("about:blank", "<h2 style='padding:40px;text-align:center;color:#666'>地图加载失败<br><small>请检查网络连接</small></h2>", "text/html", "UTF-8", null)
+                }
+                override fun onReceivedError(view: WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                    // Android 6.0+ 使用此重载
+                    if (request?.isForMainFrame == true) {
+                        AppLogger.e(TAG, "WebView错误(API23+): ${error?.description}")
+                        webView.loadDataWithBaseURL("about:blank", "<h2 style='padding:40px;text-align:center;color:#666'>地图加载失败<br><small>请检查网络连接</small></h2>", "text/html", "UTF-8", null)
+                    }
                 }
                 override fun onPageFinished(view: WebView?, url: String?) {
                     // 页面加载完成后，根据模式加载数据
@@ -350,6 +360,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
             Toast.makeText(this, "请先绑定老人设备", Toast.LENGTH_SHORT).show()
             return
         }
+        // 取消上一次位置获取协程（防止并发卡住）
+        locationJob?.cancel()
         lifecycleScope.launch {
             try {
                 // 1. 先展示缓存位置
@@ -380,29 +392,32 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     return@launch
                 }
 
-                // 3. 轮询等待老人上传新位置（最多60秒）
-                // 老人端：每10秒轮询(最多10s延迟) + GPS定位(最多15s) = 最坏25s
-                // 加急3秒模式后：3s轮询 + 15s GPS = 最坏18s
-                // 留足余量：60s
+                // 3. 轮询等待老人上传新位置（最多45秒）
+                // 关键修复：用 requestTime 作为本次请求的唯一标识
+                // 不再依赖 pullLocationStatus（上次可能残留 "done"）
                 val startWait = System.currentTimeMillis()
                 var pollCount = 0
-                while (System.currentTimeMillis() - startWait < 60_000) {
-                    kotlinx.coroutines.delay(1000)
+                while (System.currentTimeMillis() - startWait < 45_000) {
+                    // 检查协程是否被取消（用户退出或重新请求）
+                    if (!isActive) return@launch
+                    kotlinx.coroutines.delay(2000)  // 2秒轮询（原来1秒太频繁，浪费流量）
                     pollCount++
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
                         val loc = fresh.lastLocation
-                        // 三重检测：
-                        // 1) 位置时间戳新于请求时间
-                        // 2) pullLocationStatus变为done（老人已上传）
-                        // 3) 轮询超过5次且状态是done（兼容时钟偏移）
-                        val locNewer = loc.timestamp > requestTime
-                        val statusDone = fresh.pullLocationStatus == "done"
-                        val probablyDone = pollCount > 5 && statusDone && (System.currentTimeMillis() - startWait > 5_000)
-                        if (locNewer || (statusDone && pollCount > 2) || probablyDone) {
+                        // 用位置时间戳判断：新位置的时间 > 本次请求时间 = 获取成功
+                        // 这是唯一可靠的判断方式，不受上次 pullLocationStatus 残留影响
+                        if (loc.timestamp > requestTime) {
                             evalJs("hideLocatingStatus()")
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
+                            return@launch
+                        }
+                        // 兜底：轮询超过8次（16秒）且pullLocationStatus=done，说明老人已上传但时钟有偏移
+                        if (pollCount > 8 && fresh.pullLocationStatus == "done" && (System.currentTimeMillis() - startWait > 16_000)) {
+                            evalJs("hideLocatingStatus()")
+                            evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
+                            runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取位置", Toast.LENGTH_SHORT).show() }
                             return@launch
                         }
                     }
@@ -410,16 +425,17 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     val elapsed = (System.currentTimeMillis() - startWait) / 1000
                     evalJs("showLocatingStatus('📡 获取位置中...(${elapsed}s)')")
                 }
-                AppLogger.w(TAG, "位置拉取超时(>60s)，显示最近位置")
+                AppLogger.w(TAG, "位置拉取超时(>45s)，显示最近位置")
                 evalJs("hideLocatingStatus()")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_LONG).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
                 // 超时：保留步骤1的缓存位置
             } catch (e: Exception) {
-                evalJs("hideLoading()")
+                if (e is kotlinx.coroutines.CancellationException) return@launch  // 正常取消
+                evalJs("hideLocatingStatus()")
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_LONG).show()
             }
-        }
+        }.also { locationJob = it }
     }
 
     // ========================================
