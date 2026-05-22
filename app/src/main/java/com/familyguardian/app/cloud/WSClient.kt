@@ -157,8 +157,15 @@ object WSClient {
                     val mlScore = data?.optDouble("mlScore", 0.0) ?: 0.0
                     val lat = data?.optDouble("latitude", 0.0) ?: 0.0
                     val lng = data?.optDouble("longitude", 0.0) ?: 0.0
+                    // v0.47: 完整检测数据
+                    val ffDuration = data?.optLong("ffDuration", 0L) ?: 0L
+                    val physicalScore = (data?.optDouble("physicalScore", 0.0) ?: 0.0).toFloat()
+                    val weightedScore = (data?.optDouble("weightedScore", 0.0) ?: 0.0).toFloat()
+                    val decisionPath = data?.optString("decisionPath", "") ?: ""
+                    val sensorDataJson = data?.optString("sensorDataJson", "[]") ?: "[]"
+                    val feedRate = (data?.optDouble("feedRate", 0.0) ?: 0.0).toFloat()
                     Log.i(TAG, "🔴 收到跌倒事件推送: eventId=$eventId")
-                    
+
                     scope.launch {
                         _events.emit(WSEvent.FallEvent(
                             eventId = eventId,
@@ -166,7 +173,13 @@ object WSClient {
                             impactG = impactG,
                             mlScore = mlScore,
                             latitude = if (lat != 0.0) lat else null,
-                            longitude = if (lng != 0.0) lng else null
+                            longitude = if (lng != 0.0) lng else null,
+                            ffDuration = ffDuration,
+                            physicalScore = physicalScore,
+                            weightedScore = weightedScore,
+                            decisionPath = decisionPath,
+                            sensorDataJson = sensorDataJson,
+                            feedRate = feedRate
                         ))
                     }
                 }
@@ -410,7 +423,13 @@ object WSClient {
             val impactG: Double,
             val mlScore: Double,
             val latitude: Double?,
-            val longitude: Double?
+            val longitude: Double?,
+            val ffDuration: Long = 0L,
+            val physicalScore: Float = 0f,
+            val weightedScore: Float = 0f,
+            val decisionPath: String = "",
+            val sensorDataJson: String = "[]",
+            val feedRate: Float = 0f
         ) : WSEvent()
         
         /** 位置更新推送 */

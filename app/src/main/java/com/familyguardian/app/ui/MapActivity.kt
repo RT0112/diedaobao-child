@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
+import com.familyguardian.app.cloud.WSClient
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
@@ -28,6 +29,8 @@ class MapActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var currentMode = "view"
     private var locationJob: kotlinx.coroutines.Job? = null  // 取消上一次位置获取
+    private var wsListenerJob: kotlinx.coroutines.Job? = null  // WS location_update 监听
+    @Volatile private var wsLocationReceived = false  // WS是否已收到位置
 
     /**
      * JS → Kotlin 桥接。
@@ -362,9 +365,14 @@ function showSingleFence(name,lat,lng,radius,isBreached){
         }
         // 取消上一次位置获取协程（防止并发卡住）
         locationJob?.cancel()
+        wsLocationReceived = false
+
+        // 1. 启动 WS location_update 监听（实时推送优先）
+        startWSLocationListener()
+
         lifecycleScope.launch {
             try {
-                // 1. 先展示缓存位置
+                // 2. 先展示缓存位置
                 val status = CloudBaseClient.getElderStatus()
                 var hasData = false
                 if (status != null && status.lastLocation != null) {
@@ -381,8 +389,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     }
                 }
 
-                // 2. 请求老人实时位置
-                // 在 WebView 中显示持续的定位状态提示
+                // 3. 请求老人实时位置
                 evalJs("showLocatingStatus('📡 正在获取实时位置...')")
 
                 val requestTime = CloudBaseClient.requestElderLocation()
@@ -392,21 +399,18 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     return@launch
                 }
 
-                // 3. 轮询等待老人上传新位置（最多45秒）
-                // 关键修复：用 requestTime 作为本次请求的唯一标识
-                // 不再依赖 pullLocationStatus（上次可能残留 "done"）
+                // 4. 轮询等待（兜底，WS推送通常更快）
                 val startWait = System.currentTimeMillis()
                 var pollCount = 0
-                while (System.currentTimeMillis() - startWait < 45_000) {
-                    // 检查协程是否被取消（用户退出或重新请求）
+                while (System.currentTimeMillis() - startWait < 30_000) {
                     if (!isActive) return@launch
-                    kotlinx.coroutines.delay(2000)  // 2秒轮询（原来1秒太频繁，浪费流量）
+                    // WS已收到位置，轮询可以退出
+                    if (wsLocationReceived) return@launch
+                    kotlinx.coroutines.delay(2000)
                     pollCount++
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
                         val loc = fresh.lastLocation
-                        // 用位置时间戳判断：新位置的时间 > 本次请求时间 = 获取成功
-                        // 这是唯一可靠的判断方式，不受上次 pullLocationStatus 残留影响
                         if (loc.timestamp > requestTime) {
                             evalJs("hideLocatingStatus()")
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
@@ -421,21 +425,48 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                             return@launch
                         }
                     }
-                    // 更新定位状态（持续显示）
                     val elapsed = (System.currentTimeMillis() - startWait) / 1000
                     evalJs("showLocatingStatus('📡 获取位置中...(${elapsed}s)')")
                 }
-                AppLogger.w(TAG, "位置拉取超时(>45s)，显示最近位置")
+                AppLogger.w(TAG, "位置拉取超时(>30s)，显示最近位置")
                 evalJs("hideLocatingStatus()")
                 runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_LONG).show() }
                 evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
-                // 超时：保留步骤1的缓存位置
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) return@launch  // 正常取消
+                if (e is kotlinx.coroutines.CancellationException) return@launch
                 evalJs("hideLocatingStatus()")
                 Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_LONG).show()
             }
         }.also { locationJob = it }
+    }
+
+    /**
+     * 监听WS location_update事件，收到后立即更新地图
+     * 参考HomeFragment的WS监听方式
+     */
+    private fun startWSLocationListener() {
+        wsListenerJob?.cancel()
+        // 确保WS已连接
+        WSClient.connect(this)
+        wsListenerJob = lifecycleScope.launch {
+            WSClient.events.collect { event ->
+                when (event) {
+                    is WSClient.WSEvent.LocationUpdate -> {
+                        if (wsLocationReceived) return@collect
+                        wsLocationReceived = true
+                        AppLogger.i(TAG, "📍 WS收到实时位置更新: ${event.latitude},${event.longitude}")
+                        evalJs("hideLocatingStatus()")
+                        val timeStr = if (event.timestamp > 0) formatTime(event.timestamp) else "实时位置"
+                        val elderName = CloudBaseClient.getElderName()
+                        evalJs("setElderLocation(${event.latitude},${event.longitude},'${esc(elderName)}','${esc(timeStr)}')")
+                        runOnUiThread {
+                            Toast.makeText(this@MapActivity, "✅ 已获取实时位置（WS推送）", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    else -> { /* 其他事件不处理 */ }
+                }
+            }
+        }
     }
 
     // ========================================
@@ -566,6 +597,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
     }
 
     override fun onDestroy() {
+        wsListenerJob?.cancel()
+        wsListenerJob = null
         webView.destroy()
         super.onDestroy()
     }
