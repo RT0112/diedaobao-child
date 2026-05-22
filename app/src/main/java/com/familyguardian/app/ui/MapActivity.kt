@@ -365,6 +365,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
         }
         // 取消上一次位置获取协程（防止并发卡住）
         locationJob?.cancel()
+        // 取消旧的WS监听器，防止多个监听器冲突
+        wsListenerJob?.cancel()
         wsLocationReceived = false
 
         // 1. 启动 WS location_update 监听（实时推送优先）
@@ -391,6 +393,16 @@ function showSingleFence(name,lat,lng,radius,isBreached){
 
                 // 3. 请求老人实时位置
                 evalJs("showLocatingStatus('📡 正在获取实时位置...')")
+
+                // 等待WS连接建立（最多5秒），避免请求发出后WS还没连上
+                var waitWsStart = System.currentTimeMillis()
+                while (!WSClient.isWSConnected() && System.currentTimeMillis() - waitWsStart < 5000) {
+                    if (!isActive) return@launch
+                    kotlinx.coroutines.delay(200)
+                }
+                if (!WSClient.isWSConnected()) {
+                    AppLogger.w(TAG, "WS未连接，依赖HTTP轮询获取位置")
+                }
 
                 val requestTime = CloudBaseClient.requestElderLocation()
                 if (requestTime == null) {

@@ -321,21 +321,19 @@ class HomeFragment : Fragment() {
             )
             
             // 强制弹窗模式：使用全屏Intent（类似来电），绕过MIUI静默通知
-            val useFullScreen = forcePopup && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
-                    android.provider.Settings.canDrawOverlays(requireContext())
-            
+            // v24: 移除 canDrawOverlays 检查 — 全屏Intent不需要悬浮窗权限
+            // USE_FULL_SCREEN_INTENT 权限已在Manifest中声明，系统会自动允许
+            val useFullScreen = forcePopup && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
+
             if (useFullScreen) {
                 // 全屏弹窗模式：参照老人端实现，使用 NotificationCompat + PRIORITY_MAX + CATEGORY_ALARM + ongoing
-                if (!android.provider.Settings.canDrawOverlays(requireContext())) {
-                    android.widget.Toast.makeText(requireContext(), "请先在权限设置中开启「锁屏显示」权限", android.widget.Toast.LENGTH_LONG).show()
-                }
                 val fullScreenIntent = android.app.PendingIntent.getActivity(
                     requireContext(), 1, intent,
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
                 )
                 val notif = NotificationCompat.Builder(requireContext(), "full_screen_channel")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
+                    .setContentTitle("🚨 ${notification.elderName}远程协助通知")
                     .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -352,7 +350,7 @@ class HomeFragment : Fragment() {
                 // 普通通知模式
                 val notif = NotificationCompat.Builder(requireContext(), "fall_alert")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
+                    .setContentTitle("🚨 ${notification.elderName}远程协助通知")
                     .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
