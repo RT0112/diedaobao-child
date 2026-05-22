@@ -12,8 +12,10 @@ import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.data.AppDatabase
 import androidx.core.app.NotificationCompat
 import com.familyguardian.app.data.FallNotification
+import com.familyguardian.app.data.GeofenceNotification
 import com.familyguardian.app.databinding.FragmentHomeBinding
 import com.familyguardian.app.cloud.WSClient
+import android.content.Intent
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -334,7 +336,7 @@ class HomeFragment : Fragment() {
                 val notif = NotificationCompat.Builder(requireContext(), "full_screen_channel")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
                     .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
-                    .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
+                    .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_ALARM)
                     .setOngoing(true)
@@ -351,7 +353,7 @@ class HomeFragment : Fragment() {
                 val notif = NotificationCompat.Builder(requireContext(), "fall_alert")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
                     .setContentTitle("🚨 ${notification.elderName}跌倒警报！")
-                    .setContentText("冲击力${"%.1f".format(notification.impactG)}g，请及时确认")
+                    .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
                     .setContentIntent(contentIntent)
@@ -367,7 +369,7 @@ class HomeFragment : Fragment() {
     private fun showGeofenceBreachNotification(event: WSClient.WSEvent.GeofenceBreach) {
         try {
             val manager = requireContext().getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            
+
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 val channel = android.app.NotificationChannel(
                     "geofence_alert", "围栏越界告警", android.app.NotificationManager.IMPORTANCE_HIGH
@@ -378,25 +380,51 @@ class HomeFragment : Fragment() {
                 }
                 manager.createNotificationChannel(channel)
             }
-            
+
             val fenceNames = event.breaches.joinToString("、")
             val timeStr = if (event.timestamp > 0) {
                 java.text.SimpleDateFormat("HH:mm", java.util.Locale.CHINA).format(java.util.Date(event.timestamp))
             } else ""
-            
+
             val title = "⚠️ ${event.elderName}已离开围栏区域${if (timeStr.isNotEmpty()) " ($timeStr)" else ""}"
-            
+
+            // 【新增】点击跳转到地图查看位置
+            val intent = android.content.Intent(requireContext(), MapActivity::class.java).apply {
+                putExtra("mode", "view")
+                putExtra("elderId", event.elderId)
+            }
+            val contentIntent = android.app.PendingIntent.getActivity(
+                requireContext(), 1, intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
             val notif = NotificationCompat.Builder(requireContext(), "geofence_alert")
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)
                 .setContentTitle(title)
                 .setContentText(fenceNames)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                .setContentIntent(contentIntent)
                 .setDefaults(NotificationCompat.DEFAULT_ALL)
                 .build()
-            manager.notify("geofence".hashCode(), notif)
-            
+            // 用 elderId + timestamp 作为通知ID，防止多条围栏通知互相覆盖
+            val notifId = (event.elderId + event.timestamp.toString()).hashCode()
+            manager.notify(notifId, notif)
+
             android.widget.Toast.makeText(requireContext(), "$title\n$fenceNames", android.widget.Toast.LENGTH_LONG).show()
+
+            // 【新增】保存到数据库（供通知记录页面显示）
+            val db = AppDatabase.getInstance(requireContext())
+            viewLifecycleOwner.lifecycleScope.launch {
+                db.geofenceNotificationDao().insert(GeofenceNotification(
+                    elderId = event.elderId,
+                    elderName = event.elderName,
+                    breaches = fenceNames,
+                    timestamp = event.timestamp,
+                    isRead = false
+                ))
+                Log.i("HomeFragment", "围栏通知已保存到数据库: $fenceNames")
+            }
         } catch (e: Exception) {
             Log.e("HomeFragment", "围栏通知发送失败: ${e.message}")
         }

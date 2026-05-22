@@ -6,12 +6,18 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.familyguardian.app.data.AppDatabase
 import com.familyguardian.app.data.FallNotification
+import com.familyguardian.app.data.GeofenceNotification
 import com.familyguardian.app.databinding.FragmentHistoryBinding
+import com.familyguardian.app.databinding.ItemFallEventBinding
+import com.familyguardian.app.databinding.ItemGeofenceBinding
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -20,8 +26,8 @@ import java.util.Locale
 class HistoryFragment : Fragment() {
 
     private var _binding: FragmentHistoryBinding? = null
-    private lateinit var adapter: FallNotificationAdapter
-    private val notifications = mutableListOf<FallNotification>()
+    private lateinit var adapter: NotificationAdapter
+    private val items = mutableListOf<NotificationItem>()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentHistoryBinding.inflate(inflater, container, false)
@@ -33,60 +39,67 @@ class HistoryFragment : Fragment() {
 
         val b = _binding ?: return
 
-        adapter = FallNotificationAdapter(notifications) { notification ->
-            onNotificationClick(notification)
-        }
+        adapter = NotificationAdapter(
+            items,
+            onFallClick = { onFallClick(it) },
+            onGeofenceClick = { onGeofenceClick(it) }
+        )
         b.rvHistory.layoutManager = LinearLayoutManager(requireContext())
         b.rvHistory.adapter = adapter
 
-        // 全部已读按钮
+        // 全部已读按钮（仅处理跌倒通知）
         b.btnMarkAllRead.setOnClickListener { markAllRead() }
 
-        // 加载本地通知
+        // 加载本地通知（跌倒 + 围栏混合）
         loadNotifications()
     }
 
     private fun loadNotifications() {
         val db = AppDatabase.getInstance(requireContext())
         viewLifecycleOwner.lifecycleScope.launch {
-            db.fallNotificationDao().getAll().collect { list ->
+            combine(
+                db.fallNotificationDao().getAll(),
+                db.geofenceNotificationDao().getAll()
+            ) { falls, geofences ->
+                val fallItems = falls.map { NotificationItem.Fall(it) }
+                val geofenceItems = geofences.map { NotificationItem.Geofence(it) }
+                (fallItems + geofenceItems).sortedByDescending {
+                    when (it) {
+                        is NotificationItem.Fall -> it.n.timestamp
+                        is NotificationItem.Geofence -> it.n.timestamp
+                    }
+                }
+            }.collect { combined ->
                 if (!isAdded) return@collect
-                notifications.clear()
-                notifications.addAll(list)
+                items.clear()
+                items.addAll(combined)
                 adapter.notifyDataSetChanged()
                 updateEmptyState()
-                updateUnreadBadge()
             }
         }
     }
 
     private fun updateEmptyState() {
         val b = _binding ?: return
-        if (notifications.isEmpty()) {
+        if (items.isEmpty()) {
             b.tvEmpty.visibility = View.VISIBLE
             b.rvHistory.visibility = View.GONE
             b.btnMarkAllRead.visibility = View.GONE
         } else {
             b.tvEmpty.visibility = View.GONE
             b.rvHistory.visibility = View.VISIBLE
-            val hasUnread = notifications.any { !it.isRead }
-            b.btnMarkAllRead.visibility = if (hasUnread) View.VISIBLE else View.GONE
+            // 全部已读：跌倒未读数>0时显示按钮
+            val hasUnreadFalls = items.filterIsInstance<NotificationItem.Fall>().any { !it.n.isRead }
+            b.btnMarkAllRead.visibility = if (hasUnreadFalls) View.VISIBLE else View.GONE
         }
     }
 
-    private fun updateUnreadBadge() {
-        // TODO: 更新底部导航Badge显示未读数
-    }
-
-    private fun onNotificationClick(notification: FallNotification) {
+    private fun onFallClick(notification: FallNotification) {
         val db = AppDatabase.getInstance(requireContext())
-
-        // 标记已读
         viewLifecycleOwner.lifecycleScope.launch {
             db.fallNotificationDao().markRead(notification.id)
         }
 
-        // 显示详情对话框
         val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
         val timeStr = sdf.format(Date(notification.timestamp))
         val locationStr = if (notification.latitude != null && notification.longitude != null) {
@@ -96,12 +109,10 @@ class HistoryFragment : Fragment() {
         val message = buildString {
             append("⏰ $timeStr\n")
             append("👤 ${notification.elderName}\n")
-            append("💥 冲击力: ${"%.1f".format(notification.impactG)}g\n")
-            append("🤖 ML置信度: ${"%.0f".format(notification.mlScore * 100)}%\n")
             append("📍 位置: $locationStr")
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(requireContext())
+        AlertDialog.Builder(requireContext())
             .setTitle("🚨 跌倒警报")
             .setMessage(message)
             .setPositiveButton("📍 查看位置") { _, _ ->
@@ -121,16 +132,38 @@ class HistoryFragment : Fragment() {
             .show()
     }
 
+    private fun onGeofenceClick(notification: GeofenceNotification) {
+        val db = AppDatabase.getInstance(requireContext())
+        viewLifecycleOwner.lifecycleScope.launch {
+            db.geofenceNotificationDao().markRead(notification.id)
+        }
+
+        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA)
+        val timeStr = sdf.format(Date(notification.timestamp))
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("⚠️ 围栏越界告警")
+            .setMessage(buildString {
+                append("⏰ $timeStr\n")
+                append("👤 ${notification.elderName}\n")
+                append("📍 离开区域: ${notification.breaches}")
+            })
+            .setPositiveButton("📍 查看位置") { _, _ ->
+                val intent = Intent(requireContext(), MapActivity::class.java).apply {
+                    putExtra("mode", "view_location")
+                    putExtra("elderId", notification.elderId)
+                }
+                startActivity(intent)
+            }
+            .setNegativeButton("知道了", null)
+            .show()
+    }
+
     private fun markAllRead() {
         val db = AppDatabase.getInstance(requireContext())
         viewLifecycleOwner.lifecycleScope.launch {
             db.fallNotificationDao().markAllRead()
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // 每次回来刷新（可能有新通知通过轮询写入）
     }
 
     override fun onDestroyView() {
@@ -139,56 +172,111 @@ class HistoryFragment : Fragment() {
     }
 }
 
-/**
- * 通知列表适配器 — 短信风格
- */
-class FallNotificationAdapter(
-    private val notifications: List<FallNotification>,
-    private val onClick: (FallNotification) -> Unit
-) : androidx.recyclerview.widget.RecyclerView.Adapter<FallNotificationAdapter.ViewHolder>() {
+// ========== 统一通知项（跌倒 + 围栏混合列表）==========
 
-    class ViewHolder(val binding: com.familyguardian.app.databinding.ItemFallEventBinding) :
-        androidx.recyclerview.widget.RecyclerView.ViewHolder(binding.root)
+sealed class NotificationItem {
+    abstract val id: Long
+    abstract val timestamp: Long
+    abstract val elderName: String
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        val binding = com.familyguardian.app.databinding.ItemFallEventBinding.inflate(
-            LayoutInflater.from(parent.context), parent, false
-        )
-        return ViewHolder(binding)
+    data class Fall(val n: FallNotification) : NotificationItem() {
+        override val id = n.id
+        override val timestamp = n.timestamp
+        override val elderName = n.elderName
+    }
+    data class Geofence(val n: GeofenceNotification) : NotificationItem() {
+        override val id = n.id
+        override val timestamp = n.timestamp
+        override val elderName = n.elderName
+    }
+}
+
+class NotificationAdapter(
+    private val items: List<NotificationItem>,
+    private val onFallClick: (FallNotification) -> Unit,
+    private val onGeofenceClick: (GeofenceNotification) -> Unit
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    companion object {
+        const val TYPE_FALL = 0
+        const val TYPE_GEOFENCE = 1
     }
 
-    override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val notification = notifications[position]
-        val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
+    override fun getItemViewType(position: Int) = when (items[position]) {
+        is NotificationItem.Fall -> TYPE_FALL
+        is NotificationItem.Geofence -> TYPE_GEOFENCE
+    }
 
-        holder.binding.apply {
-            // 未读加粗/背景高亮
-            val isUnread = !notification.isRead
-            tvTime.text = sdf.format(Date(notification.timestamp))
-            tvTime.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-
-            // 内容行：冲击力 + ML
-            tvLocation.text = "${notification.elderName} · 冲击 ${"%.1f".format(notification.impactG)}g"
-            tvLocation.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-
-            tvImpact.text = "ML: ${"%.0f".format(notification.mlScore * 100)}%"
-            tvMlScore.text = if (notification.latitude != null && notification.longitude != null) "📍有位置" else "📍无位置"
-
-            // 状态标签
-            tvStatus.text = when {
-                !notification.isHandled -> "🔴 待处理"
-                else -> "✅ 已处理"
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        return when (viewType) {
+            TYPE_FALL -> {
+                val binding = ItemFallEventBinding.inflate(
+                    LayoutInflater.from(parent.context), parent, false
+                )
+                FallViewHolder(binding) { onFallClick(it) }
             }
-
-            // 未读标记：小圆点
-            tvStatus.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-
-            root.setOnClickListener { onClick(notification) }
-
-            // 未读背景高亮
-            root.setBackgroundColor(if (isUnread) 0x10FF0000 else 0x00000000)
+            else -> {
+                val binding = ItemGeofenceBinding.inflate(
+                    LayoutInflater.from(parent.context), parent, false
+                )
+                GeofenceViewHolder(binding) { onGeofenceClick(it) }
+            }
         }
     }
 
-    override fun getItemCount() = notifications.size
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val item = items[position]) {
+            is NotificationItem.Fall -> (holder as FallViewHolder).bind(item.n)
+            is NotificationItem.Geofence -> (holder as GeofenceViewHolder).bind(item.n)
+        }
+    }
+
+    override fun getItemCount() = items.size
+
+    class FallViewHolder(
+        val binding: ItemFallEventBinding,
+        private val onClick: (FallNotification) -> Unit
+    ) : RecyclerView.ViewHolder(binding.root) {
+        private val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
+
+        fun bind(n: FallNotification) {
+            binding.apply {
+                val isUnread = !n.isRead
+                tvTime.text = sdf.format(Date(n.timestamp))
+                tvTime.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+
+                tvLocation.text = "${n.elderName} · 跌倒警报"
+                tvLocation.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+
+                tvImpact.text = "ML: ${"%.0f".format(n.mlScore * 100)}%"
+                tvMlScore.text = if (n.latitude != null && n.longitude != null) "📍有位置" else "📍无位置"
+
+                tvStatus.text = when {
+                    !n.isHandled -> "🔴 待处理"
+                    else -> "✅ 已处理"
+                }
+                tvStatus.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+
+                root.setOnClickListener { onClick(n) }
+                root.setBackgroundColor(if (isUnread) 0x10FF0000 else 0x00000000)
+            }
+        }
+    }
+
+    // 围栏通知视图
+    class GeofenceViewHolder(
+        val binding: ItemGeofenceBinding,
+        private val onClick: (GeofenceNotification) -> Unit
+    ) : RecyclerView.ViewHolder(binding.root) {
+        private val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
+
+        fun bind(n: GeofenceNotification) {
+            binding.apply {
+                tvName.text = sdf.format(Date(n.timestamp))
+                tvDetail.text = "⚠️ ${n.elderName} 离开 ${n.breaches}"
+                root.setOnClickListener { onClick(n) }
+                root.setBackgroundColor(0x00000000)
+            }
+        }
+    }
 }
