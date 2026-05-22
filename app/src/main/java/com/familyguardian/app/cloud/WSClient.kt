@@ -61,7 +61,26 @@ object WSClient {
             return
         }
         
-        if (isConnected && webSocket != null) {
+        // 关键修复：如果未连接，先清理旧连接再重连
+        if (!isConnected || webSocket == null) {
+            // 清理旧连接
+            if (webSocket != null) {
+                Log.i(TAG, "清理旧WS连接")
+                try {
+                    webSocket?.close(1000, "Reconnecting")
+                } catch (e: Exception) {
+                    Log.w(TAG, "关闭旧连接失败: ${e.message}")
+                }
+                webSocket = null
+                isConnected = false
+            }
+            
+            // 重置重连次数（用户主动操作时给予重新连接的机会）
+            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                Log.i(TAG, "重置重连次数，给予重新连接机会")
+                reconnectAttempts = 0
+            }
+        } else {
             Log.i(TAG, "WebSocket 已连接，跳过")
             return
         }
@@ -103,20 +122,23 @@ object WSClient {
             }
             
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                Log.w(TAG, "WebSocket 关闭: $code $reason")
+                Log.w(TAG, "WebSocket 关闭中: $code $reason")
                 isConnected = false
+                this@WSClient.webSocket = null  // 关键修复：清理引用
                 webSocket.close(1000, null)
             }
             
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.w(TAG, "WebSocket 已关闭: $code $reason")
                 isConnected = false
+                this@WSClient.webSocket = null  // 关键修复：清理引用
                 scheduleReconnect(context)
             }
             
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "WebSocket 失败: ${t.message}")
                 isConnected = false
+                this@WSClient.webSocket = null  // 关键修复：清理引用
                 webSocket.cancel()
                 scheduleReconnect(context)
             }
