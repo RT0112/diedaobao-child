@@ -45,6 +45,7 @@ object FeedbackSender {
         mlProbability: Float,
         physicsScore: Float,
         weightedScore: Float,
+        feedRate: Float,
         decisionPath: String,
         sensorDataJson: String,
         deviceModel: String,
@@ -62,6 +63,7 @@ object FeedbackSender {
             put("ml_probability", mlProbability.toDouble())
             put("physics_score", physicsScore.toDouble())
             put("weighted_score", weightedScore.toDouble())
+            put("feed_rate", feedRate.toDouble())
             put("decision_path", decisionPath)
             // 传感器数据（JSON字符串→JSONArray）
             try {

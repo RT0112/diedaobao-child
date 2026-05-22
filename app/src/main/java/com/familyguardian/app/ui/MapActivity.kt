@@ -406,7 +406,7 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                     if (!isActive) return@launch
                     // WS已收到位置，轮询可以退出
                     if (wsLocationReceived) return@launch
-                    kotlinx.coroutines.delay(2000)
+                    kotlinx.coroutines.delay(1000)  // 1秒轮询，更快响应
                     pollCount++
                     val fresh = CloudBaseClient.getElderStatus()
                     if (fresh != null && fresh.lastLocation != null) {
@@ -417,8 +417,8 @@ function showSingleFence(name,lat,lng,radius,isBreached){
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
                             return@launch
                         }
-                        // 兜底：轮询超过8次（16秒）且pullLocationStatus=done，说明老人已上传但时钟有偏移
-                        if (pollCount > 8 && fresh.pullLocationStatus == "done" && (System.currentTimeMillis() - startWait > 16_000)) {
+                        // 兜底：轮询超过12次（12秒）且pullLocationStatus=done，说明老人已上传但时钟有偏移
+                        if (pollCount > 12 && fresh.pullLocationStatus == "done" && (System.currentTimeMillis() - startWait > 12_000)) {
                             evalJs("hideLocatingStatus()")
                             evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
                             runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取位置", Toast.LENGTH_SHORT).show() }
@@ -449,6 +449,18 @@ function showSingleFence(name,lat,lng,radius,isBreached){
         // 确保WS已连接
         WSClient.connect(this)
         wsListenerJob = lifecycleScope.launch {
+            // 等待WS连接建立（最多5秒）
+            var waitWsStart = System.currentTimeMillis()
+            while (!WSClient.isWSConnected() && System.currentTimeMillis() - waitWsStart < 5000) {
+                if (!isActive) return@launch
+                kotlinx.coroutines.delay(200)
+            }
+            if (!WSClient.isWSConnected()) {
+                AppLogger.w(TAG, "WS连接超时，将依赖HTTP轮询")
+            } else {
+                AppLogger.i(TAG, "WS已连接，等待位置推送...")
+            }
+
             WSClient.events.collect { event ->
                 when (event) {
                     is WSClient.WSEvent.LocationUpdate -> {

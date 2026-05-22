@@ -1,5 +1,6 @@
 package com.familyguardian.app.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -18,5 +19,12 @@ data class FallNotification(
     val impactG: Double = 0.0,
     val mlScore: Double = 0.0,
     val isRead: Boolean = false,        // 是否已读
-    val isHandled: Boolean = false      // 是否已处理（打电话/查看位置等）
+    val isHandled: Boolean = false,     // 是否已处理（打电话/查看位置等）
+    // v0.47: 完整检测数据（供反馈页面显示）
+    @ColumnInfo(defaultValue = "0") val ffDuration: Long = 0L,
+    @ColumnInfo(defaultValue = "0.0") val physicalScore: Float = 0f,
+    @ColumnInfo(defaultValue = "0.0") val weightedScore: Float = 0f,
+    @ColumnInfo(defaultValue = "") val decisionPath: String = "",
+    @ColumnInfo(defaultValue = "[]") val sensorDataJson: String = "[]",
+    @ColumnInfo(defaultValue = "0.0") val feedRate: Float = 0f
 )

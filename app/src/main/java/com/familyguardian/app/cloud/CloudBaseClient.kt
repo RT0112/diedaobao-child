@@ -646,7 +646,14 @@ object CloudBaseClient {
         val impactG: Double = 0.0,
         val mlScore: Double = 0.0,
         val latitude: Double? = null,
-        val longitude: Double? = null
+        val longitude: Double? = null,
+        // v0.47: 完整检测数据
+        val ffDuration: Long = 0L,
+        val physicalScore: Double = 0.0,
+        val weightedScore: Double = 0.0,
+        val decisionPath: String = "",
+        val sensorDataJson: String = "[]",
+        val feedRate: Double = 0.0
     )
     
     data class Location(

@@ -165,6 +165,7 @@ class FeedbackActivity : AppCompatActivity() {
         sb.append("ML概率: ${String.format("%.2f", event.optDouble("ml_probability"))}\n")
         sb.append("物理评分: ${String.format("%.2f", event.optDouble("physics_score"))}\n")
         sb.append("加权评分: ${String.format("%.2f", event.optDouble("weighted_score"))}\n")
+        sb.append("采样率: ${String.format("%.0f", event.optDouble("feed_rate"))}Hz\n")
         sb.append("决策路径: ${event.optString("decision_path", "未知")}\n")
         val sensorJson = event.optString("sensor_data_json", "[]")
         sb.append("传感器帧数: ${sensorJson.count { it == '{' }}帧\n")
@@ -234,6 +235,7 @@ class FeedbackActivity : AppCompatActivity() {
                 val mlProbability = event.optDouble("ml_probability", 0.0).toFloat()
                 val physicsScore = event.optDouble("physics_score", 0.0).toFloat()
                 val weightedScore = event.optDouble("weighted_score", 0.0).toFloat()
+                val feedRate = event.optDouble("feed_rate", 0.0).toFloat()
                 val decisionPath = event.optString("decision_path", "")
                 val sensorDataJson = event.optString("sensor_data_json", "[]")
                 
@@ -253,6 +255,7 @@ class FeedbackActivity : AppCompatActivity() {
                     mlProbability,
                     physicsScore,
                     weightedScore,
+                    feedRate,
                     decisionPath,
                     sensorDataJson,
                     deviceModel,

@@ -256,7 +256,14 @@ class HomeFragment : Fragment() {
                 impactG = fallEvent.impactG,
                 mlScore = fallEvent.mlScore,
                 isRead = false,
-                isHandled = false
+                isHandled = false,
+                // v0.47: 完整检测数据
+                ffDuration = fallEvent.ffDuration,
+                physicalScore = fallEvent.physicalScore.toFloat(),
+                weightedScore = fallEvent.weightedScore.toFloat(),
+                decisionPath = fallEvent.decisionPath,
+                sensorDataJson = fallEvent.sensorDataJson,
+                feedRate = fallEvent.feedRate.toFloat()
             )
             db.fallNotificationDao().insert(notification)
             
@@ -426,7 +433,14 @@ class HomeFragment : Fragment() {
                             impactG = event.impactG,
                             mlScore = event.mlScore,
                             isRead = false,
-                            isHandled = false
+                            isHandled = false,
+                            // v0.47: 完整检测数据
+                            ffDuration = event.ffDuration,
+                            physicalScore = event.physicalScore,
+                            weightedScore = event.weightedScore,
+                            decisionPath = event.decisionPath,
+                            sensorDataJson = event.sensorDataJson,
+                            feedRate = event.feedRate
                         )
                         val db = AppDatabase.getInstance(requireContext())
                         val existing = db.fallNotificationDao().getByEventId(event.eventId)
