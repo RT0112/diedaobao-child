@@ -124,6 +124,37 @@ class GeofenceFragment : Fragment() {
     }
     
     /**
+     * 静默同步云端围栏列表，不触发 swipeRefresh 转圈
+     * 用于删除围栏后的后台刷新
+     */
+    private fun syncFencesSilent() {
+        if (!isAdded || _binding == null) return
+        if (!CloudBaseClient.hasBoundElder()) return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                if (!isAdded) return@launch
+                val loaded = CloudBaseClient.getGeofences()
+                if (!isAdded) return@launch
+                fences.clear()
+                fences.addAll(loaded)
+                adapter.notifyDataSetChanged()
+                _binding?.let { b ->
+                    if (fences.isEmpty()) {
+                        b.layoutEmpty.visibility = View.VISIBLE
+                        b.recyclerFences.visibility = View.GONE
+                    } else {
+                        b.layoutEmpty.visibility = View.GONE
+                        b.recyclerFences.visibility = View.VISIBLE
+                    }
+                }
+            } catch (e: Exception) {
+                // 静默失败，用户可下拉刷新
+            }
+        }
+    }
+
+    /**
      * 打开地图页 — 添加围栏模式
      */
     private fun openMapForAdd() {
@@ -213,14 +244,14 @@ class GeofenceFragment : Fragment() {
 
                 if (success) {
                     Toast.makeText(requireContext(), "围栏「${fence.name}」已删除", Toast.LENGTH_SHORT).show()
-                    // 立即从本地列表移除，不等 loadFences 网络请求
+                    // 立即从本地列表移除，不调 loadFences（避免全量刷新）
                     val index = fences.indexOfFirst { it.id == fence.id }
                     if (index >= 0) {
                         fences.removeAt(index)
                         adapter.notifyItemRemoved(index)
                     }
-                    // 同时刷新完整列表（同步云端状态）
-                    loadFences()
+                    // 轻量同步云端状态（静默，不转圈）
+                    syncFencesSilent()
                 } else {
                     Toast.makeText(requireContext(), "删除失败，请重试", Toast.LENGTH_SHORT).show()
                 }
