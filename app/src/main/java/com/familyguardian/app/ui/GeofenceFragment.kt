@@ -60,7 +60,7 @@ class GeofenceFragment : Fragment() {
             if (isAdded) loadFences() 
         }
         
-        // 订阅围栏越界告警推送（根因修复：之前从未订阅 WSClient 的 geofence_breach 事件）
+        // 订阅围栏越界告警推送（即时弹窗提醒，同时 FamilyGuardianApp 已全局存DB供通知页显示）
         viewLifecycleOwner.lifecycleScope.launch {
             WSClient.events.filterIsInstance<WSEvent.GeofenceBreach>().collect { breach ->
                 if (!isAdded) return@collect
@@ -68,11 +68,10 @@ class GeofenceFragment : Fragment() {
                 android.app.AlertDialog.Builder(requireContext())
                     .setTitle("⚠️ 围栏告警")
                     .setMessage("${breach.elderName}越过了以下围栏：\n$breachNames")
-                    .setPositiveButton("查看围栏") { _, _ ->
-                        if (isAdded) loadFences()
-                    }
-                    .setNegativeButton("知道了", null)
+                    .setPositiveButton("知道了", null)
                     .show()
+                // 刷新围栏列表（更新越界状态显示）
+                loadFences()
             }
         }
         
@@ -204,16 +203,23 @@ class GeofenceFragment : Fragment() {
     
     private fun deleteFence(fence: GeofenceInfo) {
         if (!isAdded) return
-        
+
         viewLifecycleOwner.lifecycleScope.launch {
             try {
                 if (!isAdded) return@launch
-                
+
                 val success = CloudBaseClient.deleteGeofence(fence.id)
                 if (!isAdded) return@launch
-                
+
                 if (success) {
                     Toast.makeText(requireContext(), "围栏「${fence.name}」已删除", Toast.LENGTH_SHORT).show()
+                    // 立即从本地列表移除，不等 loadFences 网络请求
+                    val index = fences.indexOfFirst { it.id == fence.id }
+                    if (index >= 0) {
+                        fences.removeAt(index)
+                        adapter.notifyItemRemoved(index)
+                    }
+                    // 同时刷新完整列表（同步云端状态）
                     loadFences()
                 } else {
                     Toast.makeText(requireContext(), "删除失败，请重试", Toast.LENGTH_SHORT).show()

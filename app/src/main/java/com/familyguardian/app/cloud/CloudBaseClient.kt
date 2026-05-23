@@ -10,6 +10,8 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -68,6 +70,123 @@ object CloudBaseClient {
             if (name != null) putString(KEY_ELDER_NAME, name)
             if (phone != null) putString(KEY_ELDER_PHONE, phone)
             apply()
+        }
+    }
+    
+    // ========== 账号登录注册 ==========
+    
+    private const val KEY_ACCOUNT_ID = "account_id"
+    private const val KEY_USERNAME = "username"
+    private const val KEY_LOGGED_IN = "logged_in"
+    
+    fun isLoggedIn(): Boolean = prefs.getBoolean(KEY_LOGGED_IN, false)
+    fun getAccountId(): String? = prefs.getString(KEY_ACCOUNT_ID, null)
+    fun getUsername(): String = prefs.getString(KEY_USERNAME, "") ?: ""
+    
+    fun saveLoginInfo(accountId: String?, userId: String?, username: String) {
+        prefs.edit().apply {
+            if (accountId != null) putString(KEY_ACCOUNT_ID, accountId)
+            if (userId != null) {
+                putString(KEY_USER_ID, userId)
+                // v修复：同步更新内存中的userId，确保立即生效
+                this@CloudBaseClient.userId = userId
+            }
+            putString(KEY_USERNAME, username)
+            putBoolean(KEY_LOGGED_IN, true)
+            apply()
+        }
+    }
+    
+    fun logout() {
+        prefs.edit().apply {
+            remove(KEY_ACCOUNT_ID)
+            remove(KEY_USER_ID)
+            remove(KEY_USERNAME)
+            remove(KEY_LOGGED_IN)
+            remove(KEY_ELDER_ID)
+            remove(KEY_ELDER_NAME)
+            remove(KEY_ELDER_PHONE)
+            remove(KEY_FAMILY_ID)
+            remove(KEY_USER_NAME)
+            remove(KEY_USER_PHONE)
+            remove(KEY_GEOFENCES)
+            apply()
+        }
+        userId = null
+        elderId = null
+    }
+    
+    // 注册账号
+    suspend fun registerAccount(username: String, password: String): Result<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = JsonObject().apply {
+                    addProperty("username", username)
+                    addProperty("password", password)
+                    addProperty("role", "guardian")
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/account/register")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                response.use {
+                    val body = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
+                    val json = gson.fromJson(body, JsonObject::class.java)
+                    
+                    if (json.get("code")?.asInt == 200) {
+                        val accountId = json.get("accountId")?.let { if (it.isJsonNull) null else it.asString }
+                        val userId = json.get("userId")?.let { if (it.isJsonNull) null else it.asString }
+                        saveLoginInfo(accountId, userId, username)
+                        Result.success(accountId ?: "")
+                    } else {
+                        val msg = json.get("message")?.let { if (it.isJsonNull) null else it.asString } ?: "Registration failed"
+                        Result.failure(Exception(msg))
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "registerAccount failed: ${e.message}")
+                Result.failure(e)
+            }
+        }
+    }
+    
+    // 登录账号
+    suspend fun loginAccount(username: String, password: String): Result<String> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val body = JsonObject().apply {
+                    addProperty("username", username)
+                    addProperty("password", password)
+                    addProperty("role", "guardian")
+                }
+                
+                val request = Request.Builder()
+                    .url("$BASE_URL/account/login")
+                    .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                response.use {
+                    val body = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
+                    val json = gson.fromJson(body, JsonObject::class.java)
+                    
+                    if (json.get("code")?.asInt == 200) {
+                        val accountId = json.get("accountId")?.let { if (it.isJsonNull) null else it.asString }
+                        val userId = json.get("userId")?.let { if (it.isJsonNull) null else it.asString }
+                        saveLoginInfo(accountId, userId, username)
+                        Result.success(accountId ?: "")
+                    } else {
+                        val msg = json.get("message")?.let { if (it.isJsonNull) null else it.asString } ?: "Login failed"
+                        Result.failure(Exception(msg))
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "loginAccount failed: ${e.message}")
+                Result.failure(e)
+            }
         }
     }
     
@@ -174,8 +293,31 @@ object CloudBaseClient {
     }
     
     fun unbindElder() {
+        val savedElderId = elderId
+        val savedUserId = userId
         elderId = null
         prefs.edit().remove(KEY_ELDER_ID).apply()
+        // 后台删除云端绑定记录（否则下次 syncBindingFromCloud 会拉回来）
+        if (savedUserId != null && savedElderId != null) {
+            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val body = JsonObject().apply {
+                        addProperty("action", "unbind")
+                        addProperty("familyId", savedUserId)
+                        addProperty("elderId", savedElderId)
+                    }
+                    val request = Request.Builder()
+                        .url("$BASE_URL/bind-family")
+                        .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                        .build()
+                    client.newCall(request).execute().use { resp ->
+                        Log.i(TAG, "unbindElder cloud: ${resp.code}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "unbindElder cloud failed: ${e.message}")
+                }
+            }
+        }
     }
 
     /**
@@ -233,18 +375,17 @@ object CloudBaseClient {
                             val binding = dataArray[i].asJsonObject
                             val status = binding.get("status")?.asString ?: ""
                             if (status != "active") continue
-                            
-                            val createdAt = binding.get("createdAt")?.asString ?: ""
+
+                            // createdAt 是毫秒时间戳（Long），不是 ISO 字符串
                             val time = try {
-                                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
-                                    .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
-                                    .parse(createdAt)?.time ?: 0L
+                                binding.get("createdAt")?.asLong ?: 0L
                             } catch (e: Exception) { 0L }
-                            
+
                             // 优先选择与本地elderId匹配的记录，否则选最新的
                             val bindingElderId = binding.get("elderId")?.asString
                             if (bindingElderId == elderId) {
                                 bestBinding = binding
+                                bestTime = time
                                 break  // 找到匹配的，直接用这个
                             }
                             if (time > bestTime) {
@@ -254,15 +395,21 @@ object CloudBaseClient {
                         }
                         
                         val cloudElderId = bestBinding?.get("elderId")?.asString
-                        // 修复：只在本地没有elderId时才从云端同步
-                        // 避免云端旧绑定数据覆盖本地正确的elderId
-                        if (cloudElderId != null && elderId == null) {
+                        // 修复：无条件用云端最新绑定覆盖本地（云端一定是最新的）
+                        // 场景：老人重新注册→新userId→新绑定关系，子女端必须同步更新
+                        if (cloudElderId != null) {
+                            if (cloudElderId != elderId) {
+                                Log.i(TAG, "syncBinding: elderId changed $elderId → $cloudElderId, updating")
+                            }
                             elderId = cloudElderId
                             prefs.edit().putString(KEY_ELDER_ID, cloudElderId).apply()
-                            Log.i(TAG, "syncBinding: elderId set from cloud: $cloudElderId")
-                        } else if (cloudElderId != null && elderId != null && cloudElderId != elderId) {
-                            // 云端elderId与本地不一致，记录日志但不覆盖
-                            Log.w(TAG, "syncBinding: cloud elderId($cloudElderId) != local($elderId), keeping local")
+                        } else {
+                            // 云端没有绑定，清除本地过期数据
+                            if (elderId != null) {
+                                Log.w(TAG, "syncBinding: cloud has no binding, clearing local elderId=$elderId")
+                                elderId = null
+                                prefs.edit().remove(KEY_ELDER_ID).apply()
+                            }
                         }
                         return@withContext true
                     }
@@ -577,6 +724,7 @@ object CloudBaseClient {
     
     /**
      * 删除围栏
+     * 修复：检查响应体 success 字段 + 消费响应体防连接泄漏
      */
     suspend fun deleteGeofence(fenceId: String): Boolean {
         return withContext(Dispatchers.IO) {
@@ -586,16 +734,29 @@ object CloudBaseClient {
                     addProperty("fenceId", fenceId)
                     addProperty("creatorId", userId ?: "") // 云函数权限检查需要
                 }
-                
+
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
                     .build()
-                
+
                 val response = client.newCall(request).execute()
-                val success = response.isSuccessful
-                Log.i(TAG, "deleteGeofence: $success")
-                success
+                response.use { resp ->
+                    if (!resp.isSuccessful) {
+                        AppLogger.e(TAG, "deleteGeofence HTTP error: ${resp.code}")
+                        return@withContext false
+                    }
+
+                    val responseBody = resp.body?.string() ?: ""
+                    Log.i(TAG, "deleteGeofence response: $responseBody")
+                    val json = gson.fromJson(responseBody, JsonObject::class.java)
+                    val success = json.get("success")?.asBoolean ?: false
+                    if (!success) {
+                        val msg = json.get("message")?.asString ?: "删除失败"
+                        AppLogger.e(TAG, "deleteGeofence server error: $msg")
+                    }
+                    success
+                }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "deleteGeofence error", e)
                 false
