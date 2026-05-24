@@ -8,7 +8,10 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import okhttp3.*
+import okio.ByteString
 import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 /**
@@ -128,6 +131,10 @@ object WSClient {
                     handleMessage(text)
                 }
 
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    handleBinaryFrame(bytes)
+                }
+
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                     Log.w(TAG, "WebSocket 关闭中: $code $reason")
                     if (this@WSClient.webSocket === webSocket) {
@@ -170,7 +177,45 @@ object WSClient {
     }
     
     // ========== 消息处理 ==========
-    
+
+    /**
+     * 处理二进制帧（WebSocket 直传 JPEG，无 Base64 膨胀）
+     * 协议: 4字节大端 headerLen + JSON header + JPEG body
+     * header 格式: {"to":"guardianId","w":360,"h":640,"fn":5}
+     */
+    private fun handleBinaryFrame(bytes: ByteString) {
+        try {
+            if (bytes.size < 4) return
+            val buf = ByteBuffer.wrap(bytes.toByteArray()).order(ByteOrder.BIG_ENDIAN)
+            val headerLen = buf.int
+            if (bytes.size < 4 + headerLen) return
+            val headerBytes = ByteArray(headerLen)
+            buf.get(headerBytes)
+            val headerJson = String(headerBytes, Charsets.UTF_8)
+            val header = JSONObject(headerJson)
+            val jpegData = ByteArray(bytes.size - 4 - headerLen)
+            buf.get(jpegData)
+
+            val width = header.optInt("w", 720)
+            val height = header.optInt("h", 1280)
+            val frameNum = header.optInt("fn", 0)
+
+            if (jpegData.isEmpty()) return
+
+            scope.launch {
+                _events.emit(WSEvent.AssistFrame(
+                    frameData = "",
+                    width = width,
+                    height = height,
+                    frameNum = frameNum,
+                    jpegBytes = jpegData
+                ))
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "二进制帧解析失败: ${e.message}")
+        }
+    }
+
     private fun handleMessage(text: String) {
         try {
             val json = JSONObject(text)
@@ -499,12 +544,13 @@ object WSClient {
             val elderId: String
         ) : WSEvent()
         
-        /** 屏幕帧推送 */
+        /** 屏幕帧推送（Base64 JSON 或 WS 二进制直传） */
         data class AssistFrame(
-            val frameData: String,
+            val frameData: String,       // Base64 编码（旧兼容），二进制模式下为空
             val width: Int,
             val height: Int,
-            val frameNum: Int
+            val frameNum: Int,
+            val jpegBytes: ByteArray? = null  // WS 二进制直传的原始 JPEG 字节
         ) : WSEvent()
         
         /** 协助结束 */

@@ -115,7 +115,16 @@ class RemoteAssistManager(private val context: Context) {
 
     private fun handleWSFrame(frame: WSClient.WSEvent.AssistFrame) {
         try {
-            val bytes = Base64.decode(frame.frameData, Base64.DEFAULT)
+            // 优先使用 WS 二进制直传的原始 JPEG（无 Base64 膨胀，延迟更低）
+            val bytes: ByteArray = if (frame.jpegBytes != null && frame.jpegBytes!!.isNotEmpty()) {
+                frame.jpegBytes!!
+            } else if (frame.frameData.isNotEmpty()) {
+                // 降级：Base64 JSON 格式（HTTP fallback 或旧版兼容）
+                Base64.decode(frame.frameData, Base64.DEFAULT)
+            } else {
+                return
+            }
+
             if (bytes.isEmpty()) return
 
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
