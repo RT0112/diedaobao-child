@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
 import com.familyguardian.app.cloud.WSClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
@@ -30,7 +31,9 @@ class MapActivity : AppCompatActivity() {
     private var currentMode = "view"
     private var locationJob: kotlinx.coroutines.Job? = null  // 取消上一次位置获取
     private var wsListenerJob: kotlinx.coroutines.Job? = null  // WS location_update 监听
-    @Volatile private var wsLocationReceived = false  // WS是否已收到位置
+    @Volatile private var lastWSNotifyTime = 0L  // 防抖：最后一次WS弹Toast的时间
+    @Volatile private var locationReceived = false  // 标记是否已收到实时位置
+    @Volatile private var sessionStartShown = false  // 本次加载是否已展示过位置（防止重复）
 
     /**
      * JS → Kotlin 桥接。
@@ -138,6 +141,17 @@ class MapActivity : AppCompatActivity() {
 
         // ====== 4. 加载地图 HTML ======
         loadMapHtml()
+    }
+
+    // ========================================
+    // 生命周期：onResume - 每次进入页面刷新位置
+    // ========================================
+    override fun onResume() {
+        super.onResume()
+        if (currentMode == "view") {
+            AppLogger.i(TAG, "onResume: 重新加载位置数据")
+            loadElderData()
+        }
     }
 
     // ========================================
@@ -363,132 +377,153 @@ function showSingleFence(name,lat,lng,radius,isBreached){
             Toast.makeText(this, "请先绑定老人设备", Toast.LENGTH_SHORT).show()
             return
         }
-        // 取消上一次位置获取协程（防止并发卡住）
         locationJob?.cancel()
-        // 取消旧的WS监听器，防止多个监听器冲突
-        wsListenerJob?.cancel()
-        wsLocationReceived = false
+        locationReceived = false
+        sessionStartShown = false
 
-        // 1. 启动 WS location_update 监听（实时推送优先）
+        // 1. 展示缓存位置（立即显示，不等待WS）
+        lifecycleScope.launch {
+            val status = CloudBaseClient.getElderStatus()
+            if (status?.lastLocation != null) {
+                val loc = status.lastLocation
+                evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(status.name)}','${esc(formatTime(loc.timestamp))}')")
+                sessionStartShown = true
+            }
+            val fences = CloudBaseClient.getGeofences()
+            if (fences.isNotEmpty()) {
+                evalJs("clearFences()")
+                fences.forEach { f ->
+                    evalJs("addFence('${esc(f.id)}','${esc(f.name)}',${f.latitude},${f.longitude},${f.radius},${f.isBreached})")
+                }
+            }
+        }
+
+        // 2. 跳过本次加载（上次WS事件replay回来就已经收到位置了）
+        if (locationReceived) {
+            AppLogger.i(TAG, "loadElderData: 已有位置缓存，跳过WS请求")
+            evalJs("hideLocatingStatus()")
+            return
+        }
+
+        // 3. 启动 WS 位置监听（始终collect，不管WS是否已连接）
         startWSLocationListener()
 
+        // 4. 准备出发位置请求
         lifecycleScope.launch {
             try {
-                // 2. 先展示缓存位置
-                val status = CloudBaseClient.getElderStatus()
-                var hasData = false
-                if (status != null && status.lastLocation != null) {
-                    val loc = status.lastLocation
-                    evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(status.name)}','${esc(formatTime(loc.timestamp))}')")
-                    hasData = true
-                }
-                // 加载围栏
-                val fences = CloudBaseClient.getGeofences()
-                if (fences.isNotEmpty()) {
-                    evalJs("clearFences()")
-                    fences.forEach { f ->
-                        evalJs("addFence('${esc(f.id)}','${esc(f.name)}',${f.latitude},${f.longitude},${f.radius},${f.isBreached})")
-                    }
-                }
-
-                // 3. 请求老人实时位置
                 evalJs("showLocatingStatus('📡 正在获取实时位置...')")
 
-                // 等待WS连接建立（最多5秒），避免请求发出后WS还没连上
+                // 等待WS连接（最多5秒）
                 var waitWsStart = System.currentTimeMillis()
                 while (!WSClient.isWSConnected() && System.currentTimeMillis() - waitWsStart < 5000) {
                     if (!isActive) return@launch
                     kotlinx.coroutines.delay(200)
                 }
-                if (!WSClient.isWSConnected()) {
-                    AppLogger.w(TAG, "WS未连接，依赖HTTP轮询获取位置")
-                }
 
-                val requestTime = CloudBaseClient.requestElderLocation()
-                if (requestTime == null) {
+                val eid = com.familyguardian.app.cloud.CloudBaseClient.getElderId()
+                if (eid == null) {
                     evalJs("hideLocatingStatus()")
-                    runOnUiThread { Toast.makeText(this@MapActivity, "❌ 无法连接到老人设备", Toast.LENGTH_LONG).show() }
+                    runOnUiThread { Toast.makeText(this@MapActivity, "❌ 无法获取老人ID", Toast.LENGTH_LONG).show() }
                     return@launch
                 }
 
-                // 4. 轮询等待（兜底，WS推送通常更快）
+                if (!WSClient.isWSConnected()) {
+                    // WS 未连接：直接用缓存（已在步骤1展示）
+                    AppLogger.w(TAG, "WS未连接，显示缓存位置")
+                    evalJs("hideLocatingStatus()")
+                    if (!sessionStartShown) {
+                        runOnUiThread { Toast.makeText(this@MapActivity, "❌ WS未连接且无缓存位置", Toast.LENGTH_LONG).show() }
+                    } else {
+                        runOnUiThread { Toast.makeText(this@MapActivity, "📍 显示最近位置（WS未连接）", Toast.LENGTH_SHORT).show() }
+                    }
+                    return@launch
+                }
+
+                // 发送位置拉取请求（WS优先，超时后HTTP降级）
+                WSClient.sendLocationRequest(eid)
+                AppLogger.i(TAG, "📡 WS发送位置拉取请求 elderId=$eid")
+
+                // 同时调用HTTP接口作为降级保障（WS丢失时仍能触发老人端上传）
+                lifecycleScope.launch(Dispatchers.IO) {
+                    try {
+                        val reqTime = CloudBaseClient.requestElderLocation()
+                        if (reqTime != null) {
+                            AppLogger.i(TAG, "📡 HTTP位置请求已发送（降级保障） requestTime=$reqTime")
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "HTTP位置请求降级失败: ${e.message}")
+                    }
+                }
+
+                // 等待 WS 推送结果（最多30秒），位置到达后 locationReceived 会被 startWSLocationListener 设为 true
                 val startWait = System.currentTimeMillis()
-                var pollCount = 0
                 while (System.currentTimeMillis() - startWait < 30_000) {
                     if (!isActive) return@launch
-                    // WS已收到位置，轮询可以退出
-                    if (wsLocationReceived) return@launch
-                    kotlinx.coroutines.delay(1000)  // 1秒轮询，更快响应
-                    pollCount++
-                    val fresh = CloudBaseClient.getElderStatus()
-                    if (fresh != null && fresh.lastLocation != null) {
-                        val loc = fresh.lastLocation
-                        if (loc.timestamp > requestTime) {
-                            evalJs("hideLocatingStatus()")
-                            evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
-                            runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取实时位置", Toast.LENGTH_SHORT).show() }
-                            return@launch
-                        }
-                        // 兜底：轮询超过12次（12秒）且pullLocationStatus=done，说明老人已上传但时钟有偏移
-                        if (pollCount > 12 && fresh.pullLocationStatus == "done" && (System.currentTimeMillis() - startWait > 12_000)) {
-                            evalJs("hideLocatingStatus()")
-                            evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(fresh.name)}','${esc(formatTime(loc.timestamp))}')")
-                            runOnUiThread { Toast.makeText(this@MapActivity, "✅ 已获取位置", Toast.LENGTH_SHORT).show() }
-                            return@launch
-                        }
+                    if (locationReceived) {
+                        AppLogger.i(TAG, "✅ WS位置已收到，退出等待 (耗时${(System.currentTimeMillis() - startWait) / 1000}s)")
+                        evalJs("hideLocatingStatus()")
+                        return@launch  // 位置已在 startWSLocationListener 中更新
                     }
+                    kotlinx.coroutines.delay(1000)
                     val elapsed = (System.currentTimeMillis() - startWait) / 1000
                     evalJs("showLocatingStatus('📡 获取位置中...(${elapsed}s)')")
                 }
-                AppLogger.w(TAG, "位置拉取超时(>30s)，显示最近位置")
-                evalJs("hideLocatingStatus()")
-                runOnUiThread { Toast.makeText(this@MapActivity, "⏱ 位置获取超时，显示最近位置", Toast.LENGTH_LONG).show() }
-                evalJs("document.getElementById('time')?.textContent='显示最近位置（实时获取超时）'")
+                AppLogger.w(TAG, "WS位置拉取超时(>30s)，尝试HTTP降级")
+                // HTTP降级：直接读云端最新位置
+                try {
+                    val status = CloudBaseClient.getElderStatus()
+                    if (status?.lastLocation != null) {
+                        val loc = status.lastLocation
+                        AppLogger.i(TAG, "✅ HTTP降级成功: lat=${loc.latitude},lng=${loc.longitude}")
+                        evalJs("hideLocatingStatus()")
+                        val timeStr = formatTime(loc.timestamp)
+                        val elderName = CloudBaseClient.getElderName()
+                        evalJs("setElderLocation(${loc.latitude},${loc.longitude},'${esc(elderName)}','${esc(timeStr)}')")
+                        Toast.makeText(this@MapActivity, "📍 已显示最近位置", Toast.LENGTH_SHORT).show()
+                    } else {
+                        AppLogger.w(TAG, "HTTP降级：云端无位置数据")
+                        evalJs("hideLocatingStatus()")
+                        Toast.makeText(this@MapActivity, "⏱ 位置获取超时，请检查老人端网络", Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "HTTP降级失败: ${e.message}")
+                    evalJs("hideLocatingStatus()")
+                    Toast.makeText(this@MapActivity, "⏱ 位置获取超时，请检查老人端网络", Toast.LENGTH_LONG).show()
+                }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) return@launch
                 evalJs("hideLocatingStatus()")
-                Toast.makeText(this@MapActivity, "加载失败：${e.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(this@MapActivity, "失败：${e.message}", Toast.LENGTH_LONG).show()
             }
         }.also { locationJob = it }
     }
 
     /**
-     * 监听WS location_update事件，收到后立即更新地图
-     * 参考HomeFragment的WS监听方式
+     * 监听 WS location_update — 始终在线（不检查WS是否连接）
+     * 当收到位置时：更新地图 + 设置 locationReceived 标志
      */
     private fun startWSLocationListener() {
         wsListenerJob?.cancel()
-        // 确保WS已连接
-        WSClient.connect(this)
         wsListenerJob = lifecycleScope.launch {
-            // 等待WS连接建立（最多5秒）
-            var waitWsStart = System.currentTimeMillis()
-            while (!WSClient.isWSConnected() && System.currentTimeMillis() - waitWsStart < 5000) {
-                if (!isActive) return@launch
-                kotlinx.coroutines.delay(200)
-            }
-            if (!WSClient.isWSConnected()) {
-                AppLogger.w(TAG, "WS连接超时，将依赖HTTP轮询")
-            } else {
-                AppLogger.i(TAG, "WS已连接，等待位置推送...")
-            }
-
-            WSClient.events.collect { event ->
-                when (event) {
-                    is WSClient.WSEvent.LocationUpdate -> {
-                        if (wsLocationReceived) return@collect
-                        wsLocationReceived = true
-                        AppLogger.i(TAG, "📍 WS收到实时位置更新: ${event.latitude},${event.longitude}")
-                        evalJs("hideLocatingStatus()")
-                        val timeStr = if (event.timestamp > 0) formatTime(event.timestamp) else "实时位置"
-                        val elderName = CloudBaseClient.getElderName()
-                        evalJs("setElderLocation(${event.latitude},${event.longitude},'${esc(elderName)}','${esc(timeStr)}')")
-                        runOnUiThread {
-                            Toast.makeText(this@MapActivity, "✅ 已获取实时位置（WS推送）", Toast.LENGTH_SHORT).show()
+            AppLogger.i(TAG, "WS 位置监听器已启动")
+            try {
+                WSClient.events.collect { event ->
+                    when (event) {
+                        is WSClient.WSEvent.LocationUpdate -> {
+                            AppLogger.i(TAG, "📍 WS 位置更新: ${event.latitude},${event.longitude}")
+                            locationReceived = true
+                            evalJs("hideLocatingStatus()")
+                            val timeStr = if (event.timestamp > 0) formatTime(event.timestamp) else "实时位置"
+                            val elderName = CloudBaseClient.getElderName()
+                            evalJs("setElderLocation(${event.latitude},${event.longitude},'${esc(elderName)}','${esc(timeStr)}')")
                         }
+                        else -> {}
                     }
-                    else -> { /* 其他事件不处理 */ }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                AppLogger.i(TAG, "WS 位置监听器已取消")
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "WS 位置监听器异常: ${e.message}")
             }
         }
     }

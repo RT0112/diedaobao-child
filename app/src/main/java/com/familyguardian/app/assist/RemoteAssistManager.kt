@@ -1,6 +1,5 @@
 package com.familyguardian.app.assist
 
-import com.familyguardian.app.config.ServerConfig
 import com.familyguardian.app.cloud.WSClient
 import com.familyguardian.app.util.AppLogger
 import android.content.Context
@@ -10,31 +9,25 @@ import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.SharedFlow
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
- * 子女端远程协助管理器（v3 WebSocket 实时推送 + HTTP 降级）
- * 
- * 架构（v3 WebSocket + HTTP 降级）：
- * 1. 发起协助请求 → WS assist_request + HTTP POST 降级
- * 2. 等待老人响应 → WS assist_response 推送（降级 HTTP check_status 轮询）
- * 3. 接收屏幕帧   → WS assist_frame 推送（降级 HTTP poll_frame）
- * 4. 发送触控指令 → WS assist_signal（降级 HTTP POST signal）
- * 5. 结束协助     → WS assist_end + HTTP end
+ * 子女端远程协助管理器（纯 WebSocket 实时推送，无 HTTP 降级）
+ *
+ * 架构（纯 WS）：
+ * 1. 发起协助请求 → WS assist_request
+ * 2. 等待老人响应 → WS assist_response 推送
+ * 3. 接收屏幕帧   → WS assist_frame 推送
+ * 4. 发送触控指令 → WS assist_signal
+ * 5. 结束协助     → WS assist_end
  */
 class RemoteAssistManager(private val context: Context) {
 
     companion object {
         private const val TAG = "RemoteAssistManager"
-        // URL已迁移到ServerConfig
-        private val SIGNAL_URL = ServerConfig.REMOTE_ASSIST_URL
-        private const val STATUS_POLL_MS = 2000L
-        private const val FRAME_POLL_MS = 100L   // v27: 帧轮询间隔100ms，配合老人端3fps
         private const val REQUEST_TIMEOUT_MS = 60_000L
-        private const val MAX_TOTAL_EMPTY = 3000  // v27: 100ms*3000=300s(5分钟)无帧超时，避免误断
     }
 
     enum class State {
@@ -49,7 +42,6 @@ class RemoteAssistManager(private val context: Context) {
     var currentState = State.IDLE
         private set
     private var requestStartTime = 0L
-    private var framePollJob: Job? = null
     private var lastFrameNum = 0
     private var elderScreenWidth = 720
     private var elderScreenHeight = 1280
@@ -61,7 +53,7 @@ class RemoteAssistManager(private val context: Context) {
         AppLogger.i(TAG, "[诊断] 子女端初始化: userId=$userId, elderId=$elderId")
 
         // 连接 WebSocket
-        WSClient.connect(context)
+        // WSClient.connect(context)  // 已在 FamilyGuardianApp 统一调用
 
         // 监听 WS 事件
         startWSEventListener()
@@ -78,13 +70,14 @@ class RemoteAssistManager(private val context: Context) {
                 when (event) {
                     is WSClient.WSEvent.AssistResponse -> {
                         if (currentState != State.REQUESTING) return@collect
+                        stopWSTimeoutWatch()
                         if (event.accepted) {
-                            stopStatusPolling()  // 停止 HTTP 轮询
                             updateState(State.ACCEPTED, "老人已接受")
+                            // 等待老人端屏幕共享启动
                             delay(500)
-                            startFramePolling()
+                            updateState(State.CONNECTING, "等待屏幕画面...")
+                            startFrameTimeoutWatch()
                         } else {
-                            stopStatusPolling()
                             updateState(State.REJECTED, "老人拒绝了协助请求")
                         }
                     }
@@ -95,12 +88,12 @@ class RemoteAssistManager(private val context: Context) {
                     }
 
                     is WSClient.WSEvent.AssistEnd -> {
-                        stopPolling()
+                        stopAll()
                         updateState(State.DISCONNECTED, "协助已结束")
                     }
 
                     is WSClient.WSEvent.AssistCancel -> {
-                        stopPolling()
+                        stopAll()
                         updateState(State.ERROR, "协助请求已取消")
                     }
 
@@ -128,6 +121,7 @@ class RemoteAssistManager(private val context: Context) {
             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             if (bitmap != null) {
                 lastFrameNum = frame.frameNum
+                stopFrameTimeoutWatch()
                 if (currentState != State.STREAMING) {
                     updateState(State.STREAMING, null)
                 }
@@ -140,63 +134,65 @@ class RemoteAssistManager(private val context: Context) {
         }
     }
 
-    // ==================== 发起协助 ====================
+    // ==================== 发起协助（纯 WS） ====================
 
     fun requestAssist(guardianName: String) {
-        // v27: 非IDLE状态先清理旧会话，并通知老人端结束旧会话（兜底机制）
         if (currentState != State.IDLE) {
             AppLogger.w(TAG, "requestAssist: 当前状态=$currentState，先清理旧会话")
-            // 兜底：发 assist_end 让老人端结束旧会话
-            sendAssistEndToElder()
-            stopPolling()
+            val eid = elderId
+            if (eid != null) WSClient.sendAssistEnd(eid)
+            stopAll()
             currentState = State.IDLE
         }
         updateState(State.REQUESTING, null)
+        requestStartTime = System.currentTimeMillis()
 
-        // WS 发送协助请求（实时推送）
+        // 纯 WS 发送协助请求
         val eid = elderId
-        if (eid != null && WSClient.isWSConnected()) {
+        if (eid != null) {
             WSClient.sendAssistRequest(eid, guardianName)
-        }
+            AppLogger.i(TAG, "WS 发送协助请求: elderId=$eid")
 
-        // 同时走 HTTP 保底（处理冲突检测等）
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val body = JSONObject().apply {
-                    put("action", "request")
-                    put("elderId", elderId)
-                    put("guardianId", userId)
-                    put("guardianName", guardianName)
-                }
-                val json = httpPost(body)
-                val code = json.optInt("code", 0)
-
-                if (code == 200) {
-                    requestStartTime = System.currentTimeMillis()
-                    updateState(State.REQUESTING, "等待老人响应...")
-                    // WS 已连接则不需要 HTTP 轮询，WS 会推送 assist_response
-                    if (!WSClient.isWSConnected()) {
-                        startStatusPolling()
-                    } else {
-                        // WS 模式：仍需超时检测
-                        startWSTimeoutWatch()
+            // HTTP 降级保障：老人端WS离线时也能通过HTTP轮询收到请求
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val uid = userId ?: return@launch
+                    val prefs = context.getSharedPreferences("cloudbase", Context.MODE_PRIVATE)
+                    val token = prefs.getString("jwt_token", null)
+                    val body = org.json.JSONObject().apply {
+                        put("action", "request")
+                        put("elderId", eid)
+                        put("guardianId", uid)
+                        put("guardianName", guardianName)
                     }
-                } else {
-                    val msg = json.optString("message", "请求失败")
-                    when (code) {
-                        409 -> updateState(State.ERROR, msg)
-                        404 -> updateState(State.ERROR, "老人设备未注册")
-                        else -> updateState(State.ERROR, msg)
+                    val client = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                    val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+                    val request = okhttp3.Request.Builder()
+                        .url("${com.familyguardian.app.config.ServerConfig.BASE_URL}/remote-assist")
+                        .post(requestBody)
+                        .apply {
+                            if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                        }
+                        .build()
+                    val response = client.newCall(request).execute()
+                    response.use {
+                        if (it.isSuccessful) {
+                            AppLogger.i(TAG, "HTTP协助请求降级已发送: code=${it.code}")
+                        } else {
+                            AppLogger.w(TAG, "HTTP协助请求降级失败: code=${it.code}")
+                        }
                     }
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "HTTP协助请求降级异常: ${e.message}")
                 }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "发起请求异常: ${e.message}")
-                updateState(State.ERROR, "网络异常: ${e.message}")
             }
         }
+        // 超时检测
+        startWSTimeoutWatch()
     }
 
-    // WS 模式下的超时检测
     private var wsTimeoutJob: Job? = null
 
     private fun startWSTimeoutWatch() {
@@ -205,34 +201,8 @@ class RemoteAssistManager(private val context: Context) {
             delay(REQUEST_TIMEOUT_MS)
             if (currentState == State.REQUESTING) {
                 updateState(State.TIMEOUT, "等待超时，老人未响应")
-                cancelRemoteRequest()
-            }
-        }
-    }
-
-    /** v27: 发送 assist_end 给老人端，顶掉旧会话（兜底机制） */
-    private fun sendAssistEndToElder() {
-        val eid = elderId
-        if (eid == null) {
-            AppLogger.w(TAG, "sendAssistEndToElder: elderId=null")
-            return
-        }
-        // WS 优先
-        if (WSClient.isWSConnected()) {
-            // 通过 WS 发送 assist_end
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    // 用 HTTP 发 assist_end（WS 发消息需要后端路由支持）
-                    val body = org.json.JSONObject().apply {
-                        put("action", "end")
-                        put("elderId", eid)
-                        put("guardianId", userId)
-                    }
-                    val json = httpPost(body)
-                    AppLogger.i(TAG, "兜底：已发送 assist_end 清理旧会话: ${json.optString("message")}")
-                } catch (e: Exception) {
-                    AppLogger.w(TAG, "兜底：assist_end 发送失败: ${e.message}")
-                }
+                val eid = elderId
+                if (eid != null) WSClient.sendAssistCancel(eid)
             }
         }
     }
@@ -244,119 +214,55 @@ class RemoteAssistManager(private val context: Context) {
 
     fun cancelRequest() {
         if (currentState != State.REQUESTING) return
-        stopPolling()
-        stopWSTimeoutWatch()
-        // WS 取消
         val eid = elderId
         if (eid != null) WSClient.sendAssistCancel(eid)
-        // HTTP 取消
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                httpPost(JSONObject().apply {
-                    put("action", "cancel")
-                    put("elderId", elderId)
-                    put("guardianId", userId)
-                })
-            } catch (_: Exception) {}
-        }
+        stopAll()
         updateState(State.IDLE, null)
     }
 
-    // ==================== 状态轮询 ====================
-
-    private var statusPollJob: Job? = null
-
-    // ==================== 状态轮询（HTTP 降级） ====================
-
-    private fun startStatusPolling() {
-        stopStatusPolling()
-        statusPollJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                try {
-                    val elapsed = System.currentTimeMillis() - requestStartTime
-                    if (elapsed > REQUEST_TIMEOUT_MS) {
-                        updateState(State.TIMEOUT, "等待超时，老人未响应")
-                        cancelRemoteRequest()
-                        return@launch
-                    }
-
-                    val json = httpPost(JSONObject().apply {
-                        put("action", "check_status")
-                        put("elderId", elderId)
-                    })
-
-                    when (json.optString("status", "idle")) {
-                        "active" -> {
-                            // 保存老人真实屏幕分辨率（用于触控坐标映射）
-                            val realW = json.optInt("screenWidth", 720)
-                            val realH = json.optInt("screenHeight", 1280)
-                            if (realW > 0 && realH > 0) {
-                                elderScreenWidth = realW
-                                elderScreenHeight = realH
-                                Log.i(TAG, "老人真实屏幕分辨率: ${realW}x${realH}")
-                            }
-                            updateState(State.ACCEPTED, "老人已接受")
-                            delay(500)
-                            startFramePolling()
-                            return@launch
-                        }
-                        "rejected" -> {
-                            updateState(State.REJECTED, "老人拒绝了协助请求")
-                            return@launch
-                        }
-                        "cancelled" -> {
-                            updateState(State.ERROR, "请求已被取消")
-                            return@launch
-                        }
-                    }
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "check_status 轮询异常: ${e.message}")
-                }
-                delay(STATUS_POLL_MS)
-            }
-        }
+    fun endAssist() {
+        updateState(State.DISCONNECTED, null)
+        val eid = elderId
+        if (eid != null) WSClient.sendAssistEnd(eid)
+        stopAll()
     }
 
-    private suspend fun cancelRemoteRequest() {
-        try {
-            httpPost(JSONObject().apply {
-                put("action", "cancel")
-                put("elderId", elderId)
-                put("guardianId", userId)
-            })
-        } catch (_: Exception) {}
+    // ==================== 触控指令（纯 WS） ====================
+
+    fun sendClick(x: Float, y: Float) {
+        val eid = elderId ?: return
+        WSClient.sendTouchSignal(eid, "click", x, y, 100L)
     }
 
-    // ==================== 帧拉取 ====================
-
-    private fun startFramePolling() {
-        updateState(State.CONNECTING, "等待屏幕画面...")
-        lastFrameNum = 0
-
-        // WS 已连接：帧走 WS 推送，不需要 HTTP 轮询
-        // WS 的 assist_frame 事件在 startWSEventListener 中处理
-        // 只需设个超时检测
-        if (WSClient.isWSConnected()) {
-            AppLogger.i(TAG, "WS帧模式：等待 WS assist_frame 推送")
-            startFrameTimeoutWatch()
-            return
-        }
-
-        // HTTP 降级轮询
-        startHTTPFramePolling()
+    fun sendLongClick(x: Float, y: Float) {
+        val eid = elderId ?: return
+        WSClient.sendTouchSignal(eid, "click", x, y, 800L)
     }
+
+    fun sendSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
+        val eid = elderId ?: return
+        WSClient.sendSwipeSignal(eid, x1, y1, x2, y2, 300L)
+    }
+
+    fun sendKeyAction(keyCode: String) {
+        val eid = elderId ?: return
+        WSClient.sendKeySignal(eid, keyCode)
+    }
+
+    fun getElderScreenSize(): Pair<Int, Int> = Pair(elderScreenWidth, elderScreenHeight)
+
+    // ==================== 帧超时检测 ====================
 
     private var frameTimeoutJob: Job? = null
 
     private fun startFrameTimeoutWatch() {
         frameTimeoutJob?.cancel()
         frameTimeoutJob = CoroutineScope(Dispatchers.IO).launch {
-            var emptyCount = 0
+            var count = 0
             while (isActive && (currentState == State.CONNECTING || currentState == State.STREAMING)) {
                 delay(1000)
-                // v27: 超时从60秒延长到5分钟（300秒），避免误断
-                emptyCount++
-                if (emptyCount >= 300) {
+                count++
+                if (count >= 300) {  // 5分钟超时
                     updateState(State.DISCONNECTED, "连接超时，请检查老人端屏幕共享状态")
                     return@launch
                 }
@@ -369,252 +275,19 @@ class RemoteAssistManager(private val context: Context) {
         frameTimeoutJob = null
     }
 
-    private fun startHTTPFramePolling() {
+    // ==================== 清理 ====================
 
-        framePollJob = CoroutineScope(Dispatchers.IO).launch {
-            var emptyCount = 0
-            var totalEmptyCount = 0  // v19.7.4: 累计空帧总数，不归零
-            var decodeFailCount = 0
-            val MAX = MAX_TOTAL_EMPTY  // v27: 从伴生对象读取（=3000，5分钟 timeout）
-            while (isActive) {
-                try {
-                    val json = httpPost(JSONObject().apply {
-                        put("action", "poll_frame")
-                        put("elderId", elderId)
-                        put("lastFrameNum", lastFrameNum)
-                    })
-
-                    if (json.optBoolean("hasNewFrame", false)) {
-                        emptyCount = 0
-                        val frame = json.optJSONObject("frame")
-                        if (frame == null) {
-                            AppLogger.w(TAG, "poll_frame: frame字段缺失")
-                            continue
-                        }
-                        val b64 = frame.optString("data", "")
-                        val w = frame.optInt("width", 720)
-                        val h = frame.optInt("height", 1280)
-                        lastFrameNum = json.optInt("frameNum", lastFrameNum)
-
-                        if (b64.isEmpty()) {
-                            AppLogger.w(TAG, "poll_frame: data字段为空")
-                            continue
-                        }
-
-                        val bytes = Base64.decode(b64, Base64.DEFAULT)
-                        if (bytes.isEmpty()) {
-                            AppLogger.w(TAG, "poll_frame: Base64解码后为空")
-                            continue
-                        }
-
-                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        if (bitmap != null) {
-                            AppLogger.i(TAG, "[帧接收成功] #${lastFrameNum} ${bytes.size/1024}KB w=${w}h=${h}")
-                            decodeFailCount = 0
-                            if (currentState != State.STREAMING) {
-                                // 帧的 w/h 是缩放后的分辨率（如360x640），不要用它更新触控映射
-                                // 触控映射用 check_status 返回的真实分辨率
-                                updateState(State.STREAMING, null)
-                            }
-                            Handler(android.os.Looper.getMainLooper()).post {
-                                onFrameReceived?.invoke(bitmap, w, h)
-                            }
-                        } else {
-                            decodeFailCount++
-                            AppLogger.e(TAG, "❌ Bitmap解码失败! bytes=${bytes.size}, b64Len=${b64.length}, decodeFailCount=$decodeFailCount")
-                            if (decodeFailCount >= 3) {
-                                updateState(State.ERROR, "画面数据异常，请重新发起协助")
-                                return@launch
-                            }
-                        }
-                    } else {
-                        emptyCount++
-                        totalEmptyCount++
-                        val msg = json.optString("message", "")
-                        val targetId = json.optString("targetId", "")
-                        val bufSize = json.optInt("bufferSize", -1)
-                        AppLogger.i(TAG, "[帧拉取] 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
-                        Log.d(TAG, "poll_frame: 无新帧 emptyCount=$emptyCount total=$totalEmptyCount msg=$msg targetId=$targetId bufSize=$bufSize")
-
-                        // v19.7.4: 5分钟无帧超时断开
-                        if (totalEmptyCount >= MAX) {
-                            AppLogger.w(TAG, "帧拉取超时: ${totalEmptyCount}次无帧，自动断开")
-                            updateState(State.DISCONNECTED, "连接超时，老人端未上传画面")
-                            return@launch
-                        }
-
-                        // 等待中显示为 CONNECTING，每30次(~7.5s)刷新提示
-                        if (currentState == State.CONNECTING && emptyCount > 30) {
-                            updateState(State.CONNECTING, "等待屏幕画面...(${totalEmptyCount}次)")
-                            emptyCount = 0
-                        }
-                    }
-
-                    // 检查屏幕就绪
-                    val status = json.optString("status", "")
-                    if (status == "idle") {
-                        updateState(State.DISCONNECTED, "老人端已断开")
-                        return@launch
-                    }
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "帧拉取异常: ${e.message}")
-                }
-                delay(FRAME_POLL_MS)
-            }
-        }
-    }
-
-    // ==================== 触控指令 ====================
-
-    fun sendClick(x: Float, y: Float) {
-        sendTouchSignal("click", mapOf("x" to x, "y" to y, "duration" to 100L))
-    }
-
-    fun sendLongClick(x: Float, y: Float) {
-        sendTouchSignal("click", mapOf("x" to x, "y" to y, "duration" to 800L))
-    }
-
-    fun sendSwipe(x1: Float, y1: Float, x2: Float, y2: Float) {
-        sendTouchSignal("swipe", mapOf("x1" to x1, "y1" to y1, "x2" to x2, "y2" to y2, "duration" to 300L))
-    }
-
-    fun getElderScreenSize(): Pair<Int, Int> = Pair(elderScreenWidth, elderScreenHeight)
-
-    private fun sendTouchSignal(action: String, params: Map<String, Any>) {
-        val eid = elderId
-        // WS 优先发送（低延迟）
-        if (eid != null && WSClient.isWSConnected()) {
-            when (action) {
-                "click" -> {
-                    val x = (params["x"] as? Number)?.toFloat() ?: 0f
-                    val y = (params["y"] as? Number)?.toFloat() ?: 0f
-                    val dur = (params["duration"] as? Number)?.toLong() ?: 100L
-                    WSClient.sendTouchSignal(eid, action, x, y, dur)
-                }
-                "swipe" -> {
-                    val x1 = (params["x1"] as? Number)?.toFloat() ?: 0f
-                    val y1 = (params["y1"] as? Number)?.toFloat() ?: 0f
-                    val x2 = (params["x2"] as? Number)?.toFloat() ?: 0f
-                    val y2 = (params["y2"] as? Number)?.toFloat() ?: 0f
-                    val dur = (params["duration"] as? Number)?.toLong() ?: 300L
-                    WSClient.sendSwipeSignal(eid, x1, y1, x2, y2, dur)
-                }
-                else -> {
-                    // 其他类型走 HTTP
-                    sendTouchSignalHTTP(action, params)
-                }
-            }
-            return
-        }
-        // HTTP 降级
-        sendTouchSignalHTTP(action, params)
-    }
-
-    private fun sendTouchSignalHTTP(action: String, params: Map<String, Any>) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val signalData = mutableMapOf<String, Any>("type" to "touch", "touchAction" to action)
-                signalData.putAll(params)
-                httpPost(JSONObject().apply {
-                    put("action", "signal")
-                    put("from", userId)
-                    put("to", elderId)
-                    put("signal", JSONObject(signalData as Map<*, *>))
-                })
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "发送触控失败: ${e.message}")
-            }
-        }
-    }
-
-    // v19.7.3: 导航键指令
-    fun sendKeyAction(keyCode: String) {
-        val eid = elderId
-        // WS 优先
-        if (eid != null && WSClient.isWSConnected()) {
-            WSClient.sendKeySignal(eid, keyCode)
-            return
-        }
-        // HTTP 降级
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val signalData = mapOf<String, Any>("type" to "key", "keyCode" to keyCode)
-                httpPost(JSONObject().apply {
-                    put("action", "signal")
-                    put("from", userId)
-                    put("to", elderId)
-                    put("signal", JSONObject(signalData))
-                })
-                AppLogger.i(TAG, "导航键已发送: $keyCode")
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "发送导航键失败: ${e.message}")
-            }
-        }
-    }
-
-    // ==================== 结束 ====================
-
-    fun endAssist() {
-        updateState(State.DISCONNECTED, null)
-        val eid = elderId
-        // WS 结束
-        if (eid != null) WSClient.sendAssistEnd(eid)
-        // HTTP 结束
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // 通知云端结束
-                httpPost(JSONObject().apply {
-                    put("action", "end")
-                    put("elderId", elderId)
-                })
-            } catch (_: Exception) {}
-        }
-        stopPolling()
+    private fun stopAll() {
         stopWSTimeoutWatch()
         stopFrameTimeoutWatch()
-    }
-
-    private fun stopStatusPolling() {
-        statusPollJob?.cancel()
-        statusPollJob = null
-    }
-
-    fun stopPolling() {
-        stopStatusPolling()
-        framePollJob?.cancel()
-        framePollJob = null
     }
 
     fun dispose() {
-        stopPolling()
-        stopWSTimeoutWatch()
-        stopFrameTimeoutWatch()
+        stopAll()
         wsEventListenerJob?.cancel()
         wsEventListenerJob = null
         currentState = State.IDLE
         Log.i(TAG, "资源已释放")
-    }
-
-    // ==================== 工具 ====================
-
-    private suspend fun httpPost(body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
-        val url = URL(SIGNAL_URL)
-        val conn = url.openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.doOutput = true
-            conn.connectTimeout = 10000
-            conn.readTimeout = 15000
-            conn.outputStream.write(body.toString().toByteArray(Charsets.UTF_8))
-            val response = conn.inputStream.bufferedReader().readText()
-            JSONObject(response)
-        } catch (e: Exception) {
-            AppLogger.e(TAG, "httpPost 失败: ${e.message}, url=$SIGNAL_URL, action=${body.optString("action","?")}")
-            throw e  // 不吞异常，让调用方处理
-        } finally {
-            conn.disconnect()
-        }
     }
 
     private fun updateState(state: State, message: String?) {
