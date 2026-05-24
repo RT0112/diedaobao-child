@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import okhttp3.*
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-
+import java.util.concurrent.atomic.AtomicBoolean
 /**
  * WebSocket 实时推送客户端（子女端）
  * 
@@ -48,103 +48,119 @@ object WSClient {
     
     private var userId: String? = null
     private var elderId: String? = null
-    
+    private var authToken: String? = null
+    private val isConnecting = java.util.concurrent.atomic.AtomicBoolean(false)
     // ========== 连接管理 ==========
-    
-    fun connect(context: Context) {
-        val prefs = context.getSharedPreferences("cloudbase", Context.MODE_PRIVATE)
-        userId = prefs.getString("user_id", null)
-        elderId = prefs.getString("elder_id", null)
-        
-        if (userId == null) {
-            Log.w(TAG, "userId 为空，跳过 WS 连接")
-            return
-        }
-        
-        // 关键修复：如果未连接，先清理旧连接再重连
-        if (!isConnected || webSocket == null) {
-            // 清理旧连接
-            if (webSocket != null) {
-                Log.i(TAG, "清理旧WS连接")
-                try {
-                    webSocket?.close(1000, "Reconnecting")
-                } catch (e: Exception) {
-                    Log.w(TAG, "关闭旧连接失败: ${e.message}")
-                }
-                webSocket = null
-                isConnected = false
-            }
-            
-            // 重置重连次数（用户主动操作时给予重新连接的机会）
-            if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                Log.i(TAG, "重置重连次数，给予重新连接机会")
-                reconnectAttempts = 0
-            }
-        } else {
-            Log.i(TAG, "WebSocket 已连接，跳过")
-            return
-        }
-        
-        Log.i(TAG, "连接 WebSocket: $WS_URL, userId=$userId, elderId=$elderId")
-        
-        val client = OkHttpClient.Builder()
-            .pingInterval(HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS)
-            .build()
-        
-        val request = Request.Builder()
-            .url(WS_URL)
-            .build()
-        
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.i(TAG, "WebSocket 已连接")
-                isConnected = true
-                reconnectAttempts = 0
 
-                // 认证（含 elderId，服务器靠它把老人→家属的消息路由到正确的 WS 连接）
-                // 根因：如果只传 userId+role，服务器不知道这个家属要收哪个老人的 geofence_breach，
-                // 导致围栏告警推不到这个 WS 连接
-                val auth = JSONObject().apply {
-                    put("type", "auth")
-                    put("data", JSONObject().apply {
-                        put("userId", userId)
-                        put("role", "guardian")
-                        // 把绑定的 elderId 也告诉服务器，服务器用这个把老人事件路由到家属
-                        if (elderId != null) put("elderId", elderId)
-                    })
+    fun connect(context: Context) {
+        // 用 AtomicBoolean 防止同一进程内重入
+        if (!isConnecting.compareAndSet(false, true)) {
+            Log.w(TAG, "connect() 正在执行中，跳过重复调用")
+            return
+        }
+
+        try {
+            val prefs = context.getSharedPreferences("cloudbase", Context.MODE_PRIVATE)
+            userId = prefs.getString("user_id", null)
+            elderId = prefs.getString("elder_id", null)
+            authToken = prefs.getString("jwt_token", null)
+
+            if (userId == null) {
+                Log.w(TAG, "userId 为空，跳过 WS 连接")
+                return
+            }
+
+            // 检查 WS 连接是否还活着
+            val ws = webSocket
+            if (isConnected && ws != null) {
+                try {
+                    ws.send("{\"type\":\"ping\"}")
+                    Log.i(TAG, "WebSocket 已连接，跳过")
+                    return
+                } catch (e: Exception) {
+                    Log.w(TAG, "WebSocket 连接已断开，准备重连")
+                    isConnected = false
+                    webSocket = null
+                    try { ws.close(1000, "Connection dead") } catch (_: Exception) {}
                 }
-                Log.d(TAG, "WS auth: userId=$userId, elderId=$elderId")
-                webSocket.send(auth.toString())
             }
-            
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(text)
-            }
-            
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                Log.w(TAG, "WebSocket 关闭中: $code $reason")
-                isConnected = false
-                this@WSClient.webSocket = null  // 关键修复：清理引用
-                webSocket.close(1000, null)
-            }
-            
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.w(TAG, "WebSocket 已关闭: $code $reason")
-                isConnected = false
-                this@WSClient.webSocket = null  // 关键修复：清理引用
-                scheduleReconnect(context)
-            }
-            
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket 失败: ${t.message}")
-                isConnected = false
-                this@WSClient.webSocket = null  // 关键修复：清理引用
-                webSocket.cancel()
-                scheduleReconnect(context)
-            }
-        })
+
+            // 关闭旧连接（如果存在）
+            webSocket?.close(1000, "Reconnecting")
+            webSocket = null
+            isConnected = false
+            reconnectAttempts = 0
+
+            Log.i(TAG, "连接 WebSocket: $WS_URL, userId=$userId, elderId=$elderId")
+
+            val client = OkHttpClient.Builder()
+                .pingInterval(HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS)
+                .build()
+
+            val request = Request.Builder()
+                .url(WS_URL)
+                .build()
+
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    Log.i(TAG, "WebSocket 已连接")
+                    this@WSClient.webSocket = webSocket
+                    this@WSClient.isConnected = true
+                    reconnectAttempts = 0
+
+                    // 认证（含 elderId，服务器靠它把老人→家属的消息路由到正确的 WS 连接）
+                    val auth = JSONObject().apply {
+                        put("type", "auth")
+                        if (!authToken.isNullOrEmpty()) {
+                            put("token", authToken)
+                        }
+                        put("data", JSONObject().apply {
+                            put("userId", userId)
+                            put("role", "guardian")
+                            if (elderId != null) put("elderId", elderId)
+                        })
+                    }
+                    Log.d(TAG, "WS auth: userId=$userId, elderId=$elderId, token=${!authToken.isNullOrEmpty()}")
+                    webSocket.send(auth.toString())
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    handleMessage(text)
+                }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.w(TAG, "WebSocket 关闭中: $code $reason")
+                    if (this@WSClient.webSocket === webSocket) {
+                        this@WSClient.isConnected = false
+                        this@WSClient.webSocket = null
+                    }
+                    webSocket.close(1000, null)
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    Log.w(TAG, "WebSocket 已关闭: $code $reason")
+                    if (this@WSClient.webSocket === webSocket) {
+                        this@WSClient.isConnected = false
+                        this@WSClient.webSocket = null
+                    }
+                    scheduleReconnect(context)
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    Log.e(TAG, "WebSocket 失败: ${t.message}")
+                    if (this@WSClient.webSocket === webSocket) {
+                        this@WSClient.isConnected = false
+                        this@WSClient.webSocket = null
+                    }
+                    webSocket.cancel()
+                    scheduleReconnect(context)
+                }
+            })
+        } finally {
+            isConnecting.set(false)
+        }
     }
-    
+
     fun disconnect() {
         reconnectJob?.cancel()
         webSocket?.close(1000, "User disconnected")
@@ -320,6 +336,20 @@ object WSClient {
         }
     }
     
+    /**
+     * 发送位置拉取请求给老人端（替代 HTTP /request-elder-location）
+     */
+    fun sendLocationRequest(elderId: String) {
+        val json = JSONObject().apply {
+            put("type", "location_request")
+            put("data", JSONObject().apply {
+                put("elderId", elderId)
+                put("requestTime", System.currentTimeMillis())
+            })
+        }
+        safeSend(json)
+    }
+
     /**
      * 发送协助请求给老人端
      */

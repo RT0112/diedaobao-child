@@ -64,6 +64,7 @@ object CloudBaseClient {
     fun getUserName(): String = prefs.getString(KEY_USER_NAME, "") ?: ""
     fun getElderName(): String = prefs.getString(KEY_ELDER_NAME, "老人") ?: "老人"
     fun getElderPhone(): String = prefs.getString(KEY_ELDER_PHONE, "") ?: ""
+    fun getToken(): String = prefs.getString(KEY_TOKEN, "") ?: ""
     
     fun saveElderInfo(name: String?, phone: String?) {
         prefs.edit().apply {
@@ -78,12 +79,13 @@ object CloudBaseClient {
     private const val KEY_ACCOUNT_ID = "account_id"
     private const val KEY_USERNAME = "username"
     private const val KEY_LOGGED_IN = "logged_in"
+    private const val KEY_TOKEN = "jwt_token"
     
     fun isLoggedIn(): Boolean = prefs.getBoolean(KEY_LOGGED_IN, false)
     fun getAccountId(): String? = prefs.getString(KEY_ACCOUNT_ID, null)
     fun getUsername(): String = prefs.getString(KEY_USERNAME, "") ?: ""
     
-    fun saveLoginInfo(accountId: String?, userId: String?, username: String) {
+    fun saveLoginInfo(accountId: String?, userId: String?, username: String, token: String? = null) {
         prefs.edit().apply {
             if (accountId != null) putString(KEY_ACCOUNT_ID, accountId)
             if (userId != null) {
@@ -93,6 +95,7 @@ object CloudBaseClient {
             }
             putString(KEY_USERNAME, username)
             putBoolean(KEY_LOGGED_IN, true)
+            if (token != null) putString(KEY_TOKEN, token)
             apply()
         }
     }
@@ -126,9 +129,13 @@ object CloudBaseClient {
                     addProperty("role", "guardian")
                 }
                 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/account/register")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 
                 val response = client.newCall(request).execute()
@@ -139,7 +146,8 @@ object CloudBaseClient {
                     if (json.get("code")?.asInt == 200) {
                         val accountId = json.get("accountId")?.let { if (it.isJsonNull) null else it.asString }
                         val userId = json.get("userId")?.let { if (it.isJsonNull) null else it.asString }
-                        saveLoginInfo(accountId, userId, username)
+                        val token = json.get("token")?.let { if (it.isJsonNull) null else it.asString }
+                        saveLoginInfo(accountId, userId, username, token)
                         Result.success(accountId ?: "")
                     } else {
                         val msg = json.get("message")?.let { if (it.isJsonNull) null else it.asString } ?: "Registration failed"
@@ -163,9 +171,13 @@ object CloudBaseClient {
                     addProperty("role", "guardian")
                 }
                 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/account/login")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 
                 val response = client.newCall(request).execute()
@@ -176,7 +188,8 @@ object CloudBaseClient {
                     if (json.get("code")?.asInt == 200) {
                         val accountId = json.get("accountId")?.let { if (it.isJsonNull) null else it.asString }
                         val userId = json.get("userId")?.let { if (it.isJsonNull) null else it.asString }
-                        saveLoginInfo(accountId, userId, username)
+                        val token = json.get("token")?.let { if (it.isJsonNull) null else it.asString }
+                        saveLoginInfo(accountId, userId, username, token)
                         Result.success(accountId ?: "")
                     } else {
                         val msg = json.get("message")?.let { if (it.isJsonNull) null else it.asString } ?: "Login failed"
@@ -208,9 +221,13 @@ object CloudBaseClient {
                     addProperty("role", "guardian")
                 }
 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/user-register")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -223,11 +240,18 @@ object CloudBaseClient {
                     val responseBody = response.body?.string()
                     val json = gson.fromJson(responseBody, JsonObject::class.java)
                     val newUserId = json.get("userId")?.asString
+                    val newAccountId = json.get("accountId")?.asString
+                    val newToken = json.get("token")?.asString
 
                     if (newUserId != null) {
                         userId = newUserId
-                        prefs.edit().putString(KEY_USER_ID, newUserId).apply()
-                        Log.i(TAG, "Guardian registered: $newUserId")
+                        prefs.edit().apply {
+                            putString(KEY_USER_ID, newUserId)
+                            if (newAccountId != null) putString(KEY_ACCOUNT_ID, newAccountId)
+                            if (newToken != null) putString(KEY_TOKEN, newToken)
+                            apply()
+                        }
+                        Log.i(TAG, "Guardian registered: $newUserId, token saved: ${newToken != null}")
                         true
                     } else {
                         AppLogger.e(TAG, "autoRegister: no userId in response")
@@ -253,9 +277,13 @@ object CloudBaseClient {
                     addProperty("guardianId", userId)
                 }
                 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/bind-family")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 
                 val response = client.newCall(request).execute()
@@ -306,9 +334,13 @@ object CloudBaseClient {
                         addProperty("familyId", savedUserId)
                         addProperty("elderId", savedElderId)
                     }
+                    val token = prefs.getString(KEY_TOKEN, null)
                     val request = Request.Builder()
                         .url("$BASE_URL/bind-family")
                         .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                        .apply {
+                            if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                        }
                         .build()
                     client.newCall(request).execute().use { resp ->
                         Log.i(TAG, "unbindElder cloud: ${resp.code}")
@@ -349,9 +381,13 @@ object CloudBaseClient {
                     add("data", JsonObject().apply { addProperty("userId", userId); addProperty("role", "family") })
                 }
 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/bind-family")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -443,9 +479,13 @@ object CloudBaseClient {
                     addProperty("elderId", eid)
                 }
 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/request-elder-location")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -486,7 +526,12 @@ object CloudBaseClient {
                 val eid = elderId ?: return@withContext null
                 val url = "$BASE_URL/get-status?elderId=$eid"
 
-                val request = Request.Builder().url(url).get().build()
+                val token = prefs.getString(KEY_TOKEN, null)
+                val request = Request.Builder().url(url).get()
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
+                    .build()
                 val response = client.newCall(request).execute()
                 response.use {
                     if (!response.isSuccessful) return@withContext null
@@ -520,7 +565,12 @@ object CloudBaseClient {
                 Log.i(TAG, "getFallHistory: elderId=$eid, limit=$limit")
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$limit"
 
-                val request = Request.Builder().url(url).get().build()
+                val token = prefs.getString(KEY_TOKEN, null)
+                val request = Request.Builder().url(url).get()
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
+                    .build()
                 val response = client.newCall(request).execute()
                 response.use {
                     if (!response.isSuccessful) {
@@ -576,9 +626,13 @@ object CloudBaseClient {
                     addProperty("creatorId", userId ?: "")
                 }
 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 val response = client.newCall(request).execute()
                 response.use {
@@ -650,9 +704,13 @@ object CloudBaseClient {
                     addProperty("radius", radius)
                 }
                 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 
                 val response = client.newCall(request).execute()
@@ -694,9 +752,13 @@ object CloudBaseClient {
                     addProperty("radius", radius)
                 }
                 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
                 
                 val response = client.newCall(request).execute()
@@ -735,9 +797,13 @@ object CloudBaseClient {
                     addProperty("creatorId", userId ?: "") // 云函数权限检查需要
                 }
 
+                val token = prefs.getString(KEY_TOKEN, null)
                 val request = Request.Builder()
                     .url("$BASE_URL/geofence")
                     .post(gson.toJson(body).toRequestBody(jsonMediaType))
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
                     .build()
 
                 val response = client.newCall(request).execute()
@@ -857,7 +923,12 @@ object CloudBaseClient {
                 val eid = elderId ?: return@withContext emptyList()
                 val url = "$BASE_URL/fall-history?elderId=$eid&limit=$count"
 
-                val request = Request.Builder().url(url).get().build()
+                val token = prefs.getString(KEY_TOKEN, null)
+                val request = Request.Builder().url(url).get()
+                    .apply {
+                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                    }
+                    .build()
                 val response = client.newCall(request).execute()
                 response.use {
                     if (!response.isSuccessful) {

@@ -113,7 +113,7 @@ class HistoryFragment : Fragment() {
         }
 
         AlertDialog.Builder(requireContext())
-            .setTitle("🚨 远程协助通知")
+            .setTitle("🚨 跌倒警告")
             .setMessage(message)
             .setPositiveButton("📍 查看位置") { _, _ ->
                 if (notification.latitude != null && notification.longitude != null) {
@@ -245,7 +245,7 @@ class NotificationAdapter(
                 tvTime.text = sdf.format(Date(n.timestamp))
                 tvTime.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
 
-                tvLocation.text = "${n.elderName} · 远程协助通知"
+                tvLocation.text = "${n.elderName} · 跌倒警告"
                 tvLocation.setTypeface(null, if (isUnread) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
 
                 tvImpact.text = "ML: ${"%.0f".format(n.mlScore * 100)}%"

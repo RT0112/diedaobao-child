@@ -1,6 +1,7 @@
 package com.familyguardian.app.ui
 
 import android.content.Intent
+import com.familyguardian.app.LoginActivity
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -68,28 +69,46 @@ class SettingsFragment : Fragment() {
         val b = _binding ?: return
         val hasBound = CloudBaseClient.hasBoundElder()
         val context = context ?: return
+        val username = CloudBaseClient.getUsername()
         
-        if (hasBound) {
-            b.tvBindingInfo.text = "已绑定老人（ID: ${CloudBaseClient.getElderId()?.take(8)}...）"
-            b.tvBindingInfo.setTextColor(ContextCompat.getColor(context, android.R.color.holo_green_dark))
-            b.btnUnbind.visibility = View.VISIBLE
+        b.tvBindingInfo.text = if (hasBound) {
+            "已绑定老人（${username}）"
         } else {
-            b.tvBindingInfo.text = "未绑定老人，请在首页绑定"
-            b.tvBindingInfo.setTextColor(ContextCompat.getColor(context, android.R.color.darker_gray))
-            b.btnUnbind.visibility = View.GONE
+            "未绑定老人（${username}）"
         }
+        b.tvBindingInfo.setTextColor(
+            ContextCompat.getColor(context, 
+                if (hasBound) android.R.color.holo_green_dark else android.R.color.darker_gray)
+        )
     }
     
     private fun showResetConfirm() {
-        AlertDialog.Builder(requireContext())
-            .setTitle("重置账号")
-            .setMessage("将清除本地账号信息，重新注册。\n\n⚠️ 重新注册后会生成新的 userId（带正确前缀），需要重新绑定老人。")
-            .setPositiveButton("重置") { _, _ ->
-                CloudBaseClient.resetRegistration()
-                Toast.makeText(requireContext(), "已重置，请重启App", Toast.LENGTH_LONG).show()
-            }
-            .setNegativeButton("取消", null)
-            .show()
+        val hasBound = CloudBaseClient.hasBoundElder()
+        if (hasBound) {
+            // 已绑定老人：显示"解绑老人"确认
+            AlertDialog.Builder(requireContext())
+                .setTitle("解绑老人")
+                .setMessage("确定要解绑当前绑定的老人设备吗？\n\n解绑后需要重新输入绑定码才能再次绑定。")
+                .setPositiveButton("解绑") { _, _ ->
+                    CloudBaseClient.unbindElder()
+                    Toast.makeText(requireContext(), "已解绑老人设备", Toast.LENGTH_SHORT).show()
+                    updateBindingStatus()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        } else {
+            // 未绑定老人：显示"退出登录"确认
+            AlertDialog.Builder(requireContext())
+                .setTitle("退出登录")
+                .setMessage("确定要退出当前账号吗？\n\n退出后需要重新登录才能使用云端功能。")
+                .setPositiveButton("退出") { _, _ ->
+                    CloudBaseClient.logout()
+                    startActivity(Intent(requireContext(), LoginActivity::class.java))
+                    requireActivity().finish()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
     }
     
     private fun showAbout() {

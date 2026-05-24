@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".ui.SettingsFragment">
+    tools:context=".ui.ProfileFragment">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -12,20 +12,54 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/title_settings"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:layout_marginBottom="16dp" />
-
-        <!-- 权限设置 -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/card_permissions"
+        <!-- 顶部用户信息 -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
             android:layout_marginBottom="16dp">
+
+            <ImageView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@android:drawable/ic_menu_myplaces"
+                android:contentDescription="头像" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="16dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_username"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="未知用户"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_account_id"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="ID: 未分配"
+                    android:textSize="14sp"
+                    android:textColor="#666666" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- 卡片1：账号信息 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_account_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -36,18 +70,29 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="🔐 权限设置"
+                    android:text="👤 账号信息"
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
                 <TextView
+                    android:id="@+id/tv_binding_info"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="位置、电话、通知等权限管理"
+                    android:layout_marginTop="8dp"
+                    android:text="未绑定老人"
                     android:textSize="14sp"
                     android:textColor="#666666" />
 
+                <!-- 修改个人信息 -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_edit_profile"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="修改个人信息" />
+
+                <!-- 权限设置 -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btn_permission_settings"
                     style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -60,54 +105,12 @@
 
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 绑定状态 -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/card_binding_status"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="绑定状态"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tv_binding_info"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="未绑定"
-                    android:textSize="16sp"
-                    android:textColor="#666666" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_unbind"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="解绑老人"
-                    android:textColor="#F44336" />
-
-            </LinearLayout>
-
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- 通知设置 -->
+        <!-- 卡片2：通知设置 -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/card_notification"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -144,7 +147,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="开启后跌倒警报会强制弹出全屏通知，确保不被MIUI静默"
+                            android:text="开启后跌倒警报会强制弹出全屏通知"
                             android:textSize="12sp"
                             android:textColor="#999999" />
 
@@ -157,25 +160,46 @@
 
                 </LinearLayout>
 
+                <!-- 意见反馈 -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_feedback"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="意见反馈" />
+
             </LinearLayout>
 
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 反馈 -->
-        <Button
-            android:id="@+id/btn_feedback"
+        <!-- 解绑老人按钮 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_unbind"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="意见反馈"
             android:layout_marginBottom="8dp"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+            android:text="解绑老人"
+            android:textColor="#F44336" />
+
+        <!-- 退出登录按钮 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_logout"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="退出登录"
+            android:textColor="#F44336" />
 
         <!-- 关于 -->
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_about"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/about"
+            android:text="关于"
+            android:layout_marginBottom="8dp"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
     </LinearLayout>

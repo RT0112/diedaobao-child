@@ -5,6 +5,7 @@
     <string name="title_geofence">围栏</string>
     <string name="title_history">通知</string>
     <string name="title_settings">设置</string>
+    <string name="title_profile">我的</string>
     
     <!-- Home -->
     <string name="elder_status">老人状态</string>

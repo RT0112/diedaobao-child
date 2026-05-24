@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_geofence to "tab_geofence",
             R.id.nav_history to "tab_history",
             R.id.nav_remote_assist to "tab_assist",
-            R.id.nav_settings to "tab_settings"
+            R.id.nav_profile to "tab_profile"
         ).forEach { (id, tag) ->
             supportFragmentManager.findFragmentByTag(tag)?.let {
                 fragments[id] = it
@@ -121,7 +121,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_geofence -> GeofenceFragment()
                 R.id.nav_history -> HistoryFragment()
                 R.id.nav_remote_assist -> RemoteAssistFragment()
-                R.id.nav_settings -> SettingsFragment()
+                R.id.nav_profile -> ProfileFragment()
                 else -> HomeFragment()
             }
         }
@@ -133,7 +133,7 @@ class MainActivity : AppCompatActivity() {
             R.id.nav_geofence -> "tab_geofence"
             R.id.nav_history -> "tab_history"
             R.id.nav_remote_assist -> "tab_assist"
-            R.id.nav_settings -> "tab_settings"
+            R.id.nav_profile -> "tab_profile"
             else -> "tab_home"
         }
     }

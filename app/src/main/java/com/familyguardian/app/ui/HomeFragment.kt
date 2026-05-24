@@ -73,7 +73,15 @@ class HomeFragment : Fragment() {
                 val success = CloudBaseClient.autoRegister(requireContext())
                 if (!success) {
                     Toast.makeText(requireContext(), "网络注册失败，部分功能不可用", Toast.LENGTH_LONG).show()
+                } else {
+                    // 注册成功后，从云端同步绑定关系
+                    CloudBaseClient.syncBindingFromCloud()
                 }
+            }
+        } else {
+            // 已注册但也要同步最新绑定（防止老人重新注册后 elderId 过期）
+            viewLifecycleOwner.lifecycleScope.launch {
+                CloudBaseClient.syncBindingFromCloud()
             }
         }
     }
@@ -333,7 +341,7 @@ class HomeFragment : Fragment() {
                 )
                 val notif = NotificationCompat.Builder(requireContext(), "full_screen_channel")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("🚨 ${notification.elderName}远程协助通知")
+                    .setContentTitle("🚨 ${notification.elderName}跌倒警告")
                     .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_MAX)
                     .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -350,7 +358,7 @@ class HomeFragment : Fragment() {
                 // 普通通知模式
                 val notif = NotificationCompat.Builder(requireContext(), "fall_alert")
                     .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                    .setContentTitle("🚨 ${notification.elderName}远程协助通知")
+                    .setContentTitle("🚨 ${notification.elderName}跌倒警告")
                     .setContentText("请及时确认老人状况")
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
@@ -440,7 +448,7 @@ class HomeFragment : Fragment() {
 
     private fun startWSListener() {
         // 连接 WS
-        WSClient.connect(requireContext())
+        // WSClient.connect(requireContext())  // 已在 FamilyGuardianApp 统一调用
 
         // 监听 WS 事件
         wsListenerJob?.cancel()
