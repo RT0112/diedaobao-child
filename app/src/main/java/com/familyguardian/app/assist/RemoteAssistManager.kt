@@ -69,7 +69,8 @@ class RemoteAssistManager(private val context: Context) {
             WSClient.events.collect { event ->
                 when (event) {
                     is WSClient.WSEvent.AssistResponse -> {
-                        if (currentState != State.REQUESTING) return@collect
+                        // 放宽状态检查：只要不是IDLE或DISCONNECTED都处理（Activity重建后状态可能丢失）
+                        if (currentState == State.IDLE || currentState == State.DISCONNECTED) return@collect
                         stopWSTimeoutWatch()
                         if (event.accepted) {
                             updateState(State.ACCEPTED, "老人已接受")

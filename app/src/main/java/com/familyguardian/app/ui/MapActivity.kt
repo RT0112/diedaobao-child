@@ -398,13 +398,6 @@ function showSingleFence(name,lat,lng,radius,isBreached){
             }
         }
 
-        // 2. 跳过本次加载（上次WS事件replay回来就已经收到位置了）
-        if (locationReceived) {
-            AppLogger.i(TAG, "loadElderData: 已有位置缓存，跳过WS请求")
-            evalJs("hideLocatingStatus()")
-            return
-        }
-
         // 3. 启动 WS 位置监听（始终collect，不管WS是否已连接）
         startWSLocationListener()
 
