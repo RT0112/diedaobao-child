@@ -38,8 +38,8 @@ object WSClient {
     private const val MAX_RECONNECT_ATTEMPTS = 10
     private const val HEARTBEAT_INTERVAL_MS = 25000L
     
-    private var webSocket: WebSocket? = null
-    private var isConnected = false
+    @Volatile private var webSocket: WebSocket? = null
+    @Volatile private var isConnected = false
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
