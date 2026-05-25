@@ -45,8 +45,9 @@ object WSClient {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // 事件流：供 UI/Service 订阅
-    // replay=1 保证新订阅者能收到最新一条消息（避免 FallEvent 丢失）
-    private val _events = MutableSharedFlow<WSEvent>(replay = 1, extraBufferCapacity = 50)
+    // replay=0 避免旧LocationUpdate被重放导致locationReceived误触发
+    // FallEvent不会丢失：HomeFragment始终订阅，且有get-status轮询兜底
+    private val _events = MutableSharedFlow<WSEvent>(replay = 0, extraBufferCapacity = 50)
     val events: SharedFlow<WSEvent> = _events
     
     private var userId: String? = null
