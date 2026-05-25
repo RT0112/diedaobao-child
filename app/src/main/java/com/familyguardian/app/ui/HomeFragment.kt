@@ -153,6 +153,10 @@ class HomeFragment : Fragment() {
                     Toast.makeText(requireContext(), "绑定成功！", Toast.LENGTH_SHORT).show()
                     b.etBindCode.text?.clear()
                     if (isAdded) updateUI()
+                    
+                    // 修复：绑定成功后重连WS（用新的family_id/elder_id重新认证）
+                    Log.i("HomeFragment", "绑定成功，重连WS")
+                    WSClient.connect(requireContext())
                 } else {
                     showBindError(result.message)
                 }
