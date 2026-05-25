@@ -398,6 +398,10 @@ function showSingleFence(name,lat,lng,radius,isBreached){
             }
         }
 
+        // 2. 不再跳过加载——每次进入页面都重新获取位置
+        //    旧逻辑：if (locationReceived) { return } 会导致第二次进入时不刷新
+        //    修复：删除跳过逻辑，每次都走WS+HTTP降级流程
+
         // 3. 启动 WS 位置监听（始终collect，不管WS是否已连接）
         startWSLocationListener()
 
