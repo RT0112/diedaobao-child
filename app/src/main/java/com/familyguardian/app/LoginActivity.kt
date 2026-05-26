@@ -10,6 +10,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.familyguardian.app.cloud.CloudBaseClient
+import com.familyguardian.app.cloud.WSClient
 import com.familyguardian.app.databinding.ActivityLoginBinding
 import kotlinx.coroutines.launch
 
@@ -143,6 +144,8 @@ class LoginActivity : AppCompatActivity() {
             result.onSuccess {
                 // 登录成功后，从云端同步绑定关系（更新 elderId）
                 CloudBaseClient.syncBindingFromCloud()
+                // 连接WebSocket
+                WSClient.connect(this@LoginActivity)
                 showSuccess("🎉 登录成功，欢迎回来！")
                 // 延迟跳转，让用户看到成功提示
                 Handler(Looper.getMainLooper()).postDelayed({
@@ -232,6 +235,8 @@ class LoginActivity : AppCompatActivity() {
             result.onSuccess {
                 // 注册成功后，从云端同步绑定关系（更新 elderId）
                 CloudBaseClient.syncBindingFromCloud()
+                // 连接WebSocket
+                WSClient.connect(this@LoginActivity)
                 showSuccess("🎉 注册成功！正在进入...")
                 // 延迟跳转，让用户看到成功提示
                 Handler(Looper.getMainLooper()).postDelayed({

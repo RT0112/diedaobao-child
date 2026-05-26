@@ -8,6 +8,7 @@ import android.util.Log
 import android.view.MenuItem
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
+import com.familyguardian.app.cloud.WSClient
 import com.familyguardian.app.databinding.ActivityMainBinding
 import com.familyguardian.app.ui.*
 import java.io.File
@@ -77,6 +78,9 @@ class MainActivity : AppCompatActivity() {
         
         // 首次启动自动跳转权限设置页
         checkAndRequestPermissions()
+        
+        // 兜底：确保WebSocket连接（如果已登录）
+        WSClient.connect(this)
     }
     
     private fun restoreFragments() {
