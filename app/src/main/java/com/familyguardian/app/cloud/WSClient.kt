@@ -57,6 +57,11 @@ object WSClient {
     private var elderId: String? = null
     private var authToken: String? = null
     private val isConnecting = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    // 认证状态追踪：避免重复建连踢自己
+    @Volatile private var isAuthenticated = false
+    private var lastAuthUserId: String? = null
+    private var lastAuthElderId: String? = null
     // ========== 连接管理 ==========
 
     fun connect(context: Context) {
@@ -83,25 +88,34 @@ object WSClient {
             // 启动看门狗
             startWatchdog(context)
             
-            // 检查 WS 连接是否还活着
-            val ws = webSocket
-            if (isConnected && ws != null) {
-                try {
-                    ws.send("{\"type\":\"ping\"}")
-                    Log.i(TAG, "WebSocket 已连接，跳过")
+            // 智能连接判断：已连接+已认证+凭据没变 → 跳过重连（避免踢自己）
+            if (isConnected && isAuthenticated && userId == lastAuthUserId) {
+                if (elderId == lastAuthElderId) {
+                    Log.i(TAG, "WS已连接且已认证，userId/elderId未变，跳过")
                     return
-                } catch (e: Exception) {
-                    Log.w(TAG, "WebSocket 连接已断开，准备重连")
-                    isConnected = false
-                    webSocket = null
-                    try { ws.close(1000, "Connection dead") } catch (_: Exception) {}
+                } else {
+                    // elderId变了（如绑定新老人），只重发auth不断连
+                    Log.i(TAG, "WS已连接但elderId变了，重发auth: $lastAuthElderId → $elderId")
+                    val auth = JSONObject().apply {
+                        put("type", "auth")
+                        if (!authToken.isNullOrEmpty()) put("token", authToken)
+                        put("data", JSONObject().apply {
+                            put("userId", userId)
+                            put("role", "guardian")
+                            if (elderId != null) put("elderId", elderId)
+                        })
+                    }
+                    webSocket?.send(auth.toString())
+                    lastAuthElderId = elderId
+                    return
                 }
             }
 
-            // 关闭旧连接（如果存在）
+            // 连接断了或未认证，正常建连
             webSocket?.close(1000, "Reconnecting")
             webSocket = null
             isConnected = false
+            isAuthenticated = false
             reconnectAttempts = 0
 
             Log.i(TAG, "连接 WebSocket: $WS_URL, userId=$userId, elderId=$elderId")
@@ -149,6 +163,7 @@ object WSClient {
                     Log.w(TAG, "WebSocket 关闭中: $code $reason")
                     if (this@WSClient.webSocket === webSocket) {
                         this@WSClient.isConnected = false
+                        this@WSClient.isAuthenticated = false
                         this@WSClient.webSocket = null
                     }
                     webSocket.close(1000, null)
@@ -158,6 +173,7 @@ object WSClient {
                     Log.w(TAG, "WebSocket 已关闭: $code $reason")
                     if (this@WSClient.webSocket === webSocket) {
                         this@WSClient.isConnected = false
+                        this@WSClient.isAuthenticated = false
                         this@WSClient.webSocket = null
                     }
                     scheduleReconnect(context)
@@ -167,6 +183,7 @@ object WSClient {
                     Log.e(TAG, "WebSocket 失败: ${t.message}")
                     if (this@WSClient.webSocket === webSocket) {
                         this@WSClient.isConnected = false
+                        this@WSClient.isAuthenticated = false
                         this@WSClient.webSocket = null
                     }
                     webSocket.cancel()
@@ -184,6 +201,7 @@ object WSClient {
         webSocket?.close(1000, "User disconnected")
         webSocket = null
         isConnected = false
+        isAuthenticated = false
         Log.i(TAG, "WebSocket 已断开")
     }
     
@@ -236,8 +254,12 @@ object WSClient {
             when (type) {
                 "auth_result" -> {
                     if (json.optBoolean("success", false)) {
-                        Log.i(TAG, "WebSocket 认证成功")
+                        isAuthenticated = true
+                        lastAuthUserId = userId
+                        lastAuthElderId = elderId
+                        Log.i(TAG, "WebSocket 认证成功, userId=$userId, elderId=$elderId")
                     } else {
+                        isAuthenticated = false
                         Log.e(TAG, "WebSocket 认证失败: ${json.optString("message")}")
                     }
                 }
