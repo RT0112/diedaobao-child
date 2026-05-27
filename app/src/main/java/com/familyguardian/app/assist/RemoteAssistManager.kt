@@ -45,6 +45,8 @@ class RemoteAssistManager(private val context: Context) {
     private var lastFrameNum = 0
     private var elderScreenWidth = 720
     private var elderScreenHeight = 1280
+    // 优化3: 帧渲染代数计数器，只渲染最新帧，丢弃积压旧帧
+    private val renderGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
     fun initialize(guardianUserId: String, boundElderId: String) {
         userId = guardianUserId
@@ -135,8 +137,13 @@ class RemoteAssistManager(private val context: Context) {
                 if (currentState != State.STREAMING) {
                     updateState(State.STREAMING, null)
                 }
+                // 优化3: 只渲染最新帧，丢弃积压的旧帧
+                val myGen = renderGeneration.incrementAndGet()
                 Handler(android.os.Looper.getMainLooper()).post {
-                    onFrameReceived?.invoke(bitmap, frame.width, frame.height)
+                    if (myGen == renderGeneration.get()) {
+                        onFrameReceived?.invoke(bitmap, frame.width, frame.height)
+                    }
+                    // 旧帧自动丢弃，不渲染（避免UI线程队列积压导致画面延迟）
                 }
             }
         } catch (e: Exception) {
